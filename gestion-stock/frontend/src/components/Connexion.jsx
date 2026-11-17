@@ -6,10 +6,11 @@
 import { useState, useEffect } from 'react';
 import { connexion, getConfigPublique } from '../api';
 
-function Connexion({ onConnecte }) {
+function Connexion({ onConnecte, messageInitial = null }) {
   const [email, setEmail] = useState('');
   const [motDePasse, setMotDePasse] = useState('');
-  const [erreur, setErreur] = useState(null);
+  // messageInitial : raison affichée d'emblée (ex. session expirée)
+  const [erreur, setErreur] = useState(messageInitial);
   const [enCours, setEnCours] = useState(false);
   // null = pas encore su. On n'affiche les comptes de démonstration
   // que si le serveur confirme qu'ils existent ET que la sécurité

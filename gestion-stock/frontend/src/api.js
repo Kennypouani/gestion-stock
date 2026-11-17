@@ -7,6 +7,16 @@
 // Adresse de notre serveur backend
 const BASE = 'http://localhost:5000/api';
 
+// Un 401 sur une route métier signifie que la session est morte : on prévient
+// l'application (App.jsx écoute et renvoie vers la connexion).
+// Les routes /auth/* sont exclues : y recevoir un 401 veut dire « mauvais
+// identifiants » ou « ancien mot de passe incorrect », pas « session expirée ».
+function signalerSessionExpiree(url, statut) {
+  if (statut === 401 && !url.includes('/auth/')) {
+    window.dispatchEvent(new Event('session-expiree'));
+  }
+}
+
 // Fonction utilitaire : envoie une requête et gère les erreurs réseau
 async function requete(url, options = {}) {
   const reponse = await fetch(url, {
@@ -15,6 +25,8 @@ async function requete(url, options = {}) {
     credentials: 'include',
     ...options,
   });
+
+  signalerSessionExpiree(url, reponse.status);
 
   // Si le serveur répond avec une erreur (400, 404, 500...)
   if (!reponse.ok) {
@@ -180,6 +192,7 @@ export const changerMotDePasse = (donnees) =>
 // On récupère le fichier en blob, puis on déclenche le téléchargement
 export async function telechargerCSV(chemin, nomFichier) {
   const reponse = await fetch(`${BASE}${chemin}`, { credentials: 'include' });
+  signalerSessionExpiree(`${BASE}${chemin}`, reponse.status);
   if (!reponse.ok) {
     const donnees = await reponse.json().catch(() => ({}));
     throw new Error(donnees.erreur || 'Export impossible');

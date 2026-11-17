@@ -89,6 +89,16 @@ app.use('/api/export', verifierConnexion, exigerRole('admin', 'gerant'), exportR
 // Sauvegardes de la base : réservées à l'administration
 app.use('/api/sauvegardes', verifierConnexion, exigerRole('admin'), sauvegardeRoutes);
 
+// --- Route /api inconnue : réponse JSON, jamais la page d'erreur d'Express ---
+// Sans ce garde-fou, Express renvoie « Cannot GET /api/... » en HTML anglais,
+// ce qui casse le format attendu par le frontend.
+app.use('/api', (req, res) => {
+  res.status(404).json({
+    erreur: 'Route inconnue — vérifiez l’adresse appelée',
+    chemin: req.originalUrl,
+  });
+});
+
 // --- Gestion des erreurs (affiche une erreur claire au lieu de planter) ---
 app.use((err, req, res, next) => {
   console.error('Erreur serveur :', err.message);

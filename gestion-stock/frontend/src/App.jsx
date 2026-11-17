@@ -15,12 +15,21 @@ import ChangerMotDePasse from './components/ChangerMotDePasse';
 import { getUtilisateurCourant, deconnexion } from './api';
 import './App.css';
 
+// L'application n'a qu'une seule adresse : les écrans sont des onglets,
+// pas des pages. Tout autre chemin est donc une URL inconnue.
+const CHEMINS_CONNUS = ['/', '/index.html'];
+
 function App() {
   // utilisateur = null (non connecté) ou { nom, email, role }
   const [utilisateur, setUtilisateur] = useState(null);
   const [verification, setVerification] = useState(true); // encore en cours ?
   const [onglet, setOnglet] = useState('tableau-bord');
   const [modaleMotDePasse, setModaleMotDePasse] = useState(false); // changement de mdp
+  // Chemin courant : une seule source de vérité, mise à jour par le bouton
+  // « Revenir à l'application ». Le reste en est déduit.
+  const [chemin, setChemin] = useState(() => window.location.pathname);
+  const cheminInconnu = !CHEMINS_CONNUS.includes(chemin);
+  const [messageConnexion, setMessageConnexion] = useState(null);
 
   // Au chargement de la page : on vérifie si un cookie de session existe
   useEffect(() => {
@@ -28,6 +37,18 @@ function App() {
       .then((u) => setUtilisateur(u))
       .catch(() => setUtilisateur(null)) // Pas de session valide → page de connexion
       .finally(() => setVerification(false));
+  }, []);
+
+  // Session expirée ou révoquée pendant l'utilisation : l'API a répondu 401
+  // (voir api.js). On ferme tout et on renvoie vers l'écran de connexion.
+  useEffect(() => {
+    const surSessionExpiree = () => {
+      setModaleMotDePasse(false);
+      setMessageConnexion('Votre session a expiré — reconnectez-vous pour continuer.');
+      setUtilisateur(null);
+    };
+    window.addEventListener('session-expiree', surSessionExpiree);
+    return () => window.removeEventListener('session-expiree', surSessionExpiree);
   }, []);
 
   // Recharge l'utilisateur courant (après un changement de mot de passe imposé)
@@ -46,6 +67,32 @@ function App() {
     }
   }
 
+  // --- Adresse inconnue → écran dédié, avec retour vers l'application ---
+  // Testé AVANT la vérification de session : inutile d'appeler l'API
+  // (et d'afficher « Vérification… ») pour une adresse qui n'existe pas.
+  if (cheminInconnu) {
+    return (
+      <div className="page-connexion">
+        <div className="boite-connexion">
+          <h1>🧭 Page introuvable</h1>
+          <p className="sous-titre">
+            L'adresse « {chemin} » ne correspond à aucun écran de l'application.
+          </p>
+          <button
+            type="button"
+            className="btn-principal"
+            onClick={() => {
+              window.history.replaceState({}, '', '/');
+              setChemin('/');
+            }}
+          >
+            ⬅️ Revenir à l'application
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // --- Écran de chargement (pendant la vérification de session) ---
   if (verification) {
     return <div className="message-chargement centrage">Vérification de la session…</div>;
@@ -53,7 +100,15 @@ function App() {
 
   // --- Non connecté → uniquement la page de connexion ---
   if (!utilisateur) {
-    return <Connexion onConnecte={setUtilisateur} />;
+    return (
+      <Connexion
+        messageInitial={messageConnexion}
+        onConnecte={(u) => {
+          setMessageConnexion(null);
+          setUtilisateur(u);
+        }}
+      />
+    );
   }
 
   // --- Mot de passe à changer avant tout usage ---
