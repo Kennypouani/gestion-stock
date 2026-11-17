@@ -12,6 +12,7 @@
 // ============================================================
 
 const { DatabaseSync } = require('node:sqlite');
+const config = require('./config'); // Réglages lus dans l'environnement (.env)
 const db = new DatabaseSync('stock.db'); // Crée le fichier stock.db s'il n'existe pas
 
 // Active les clés étrangères (relations entre tables)
@@ -100,6 +101,26 @@ db.exec(`
     FOREIGN KEY (utilisateur_id) REFERENCES utilisateurs(id) ON DELETE CASCADE
   );
 `);
+
+// Table META — marqueurs de migration interne (ex : jetons hachés)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS meta (
+    cle TEXT PRIMARY KEY,
+    valeur TEXT NOT NULL
+  );
+`);
+
+// Les jetons de session sont désormais stockés HACHÉS (SHA-256).
+// Les sessions créées avant ce changement contiennent le jeton en clair :
+// on les invalide une seule fois, chacun se reconnecte.
+const marqueurJetons = db.prepare("SELECT valeur FROM meta WHERE cle = 'jetons_haches'").get();
+if (!marqueurJetons) {
+  const supprimees = db.prepare('DELETE FROM sessions').run().changes;
+  db.prepare("INSERT INTO meta (cle, valeur) VALUES ('jetons_haches', '1')").run();
+  if (supprimees > 0) {
+    console.log(`🔐 ${supprimees} session(s) invalidée(s) — les jetons sont maintenant hachés en base`);
+  }
+}
 
 // Table JOURNAL — traçabilité de TOUTES les modifications (réseau entier,
 // l'admin doit pouvoir auditier chaque boutique)
@@ -268,17 +289,44 @@ if (db.prepare('SELECT COUNT(*) AS n FROM boutiques').get().n === 0) {
   console.log('🏪 Boutique de démarrage créée (code ticket : MP)');
 }
 
-// 2) Les comptes : admin du réseau, gérant et caissier de la boutique
+// 2) Les comptes initiaux
+//    • hors production : admin + gérant + caissier de démonstration
+//    • en production    : AUCUN mot de passe connu, uniquement le compte
+//      administrateur fourni par ADMIN_EMAIL / ADMIN_MOT_DE_PASSE
 if (db.prepare('SELECT COUNT(*) AS n FROM utilisateurs').get().n === 0) {
   const inserer = db.prepare(
     'INSERT INTO utilisateurs (nom, email, mot_de_passe, role, boutique_id) VALUES (?, ?, ?, ?, ?)'
   );
-  // hashSync = chiffrement du mot de passe (coût 10 = standard de sécurité)
+  // hashSync = hachage du mot de passe (coût 10 = standard de sécurité)
   // admin → boutique_id NULL = accès à tout le réseau
-  inserer.run('Administrateur', 'admin@magasin.fr', bcrypt.hashSync('admin123', 10), 'admin', null);
-  inserer.run('Karim Kouassi', 'gerant@magasin.fr', bcrypt.hashSync('gerant123', 10), 'gerant', 1);
-  inserer.run('Awa Diallo', 'awa@magasin.fr', bcrypt.hashSync('employe123', 10), 'employe', 1);
-  console.log('👤 Comptes créés : admin@magasin.fr / gerant@magasin.fr / awa@magasin.fr');
+
+  if (config.comptesDemo) {
+    inserer.run('Administrateur', 'admin@magasin.fr', bcrypt.hashSync(config.mdpDemo.admin, 10), 'admin', null);
+    inserer.run('Karim Kouassi', 'gerant@magasin.fr', bcrypt.hashSync(config.mdpDemo.gerant, 10), 'gerant', 1);
+    inserer.run('Awa Diallo', 'awa@magasin.fr', bcrypt.hashSync(config.mdpDemo.employe, 10), 'employe', 1);
+    console.log('👤 Comptes de DÉMONSTRATION créés : admin@magasin.fr / gerant@magasin.fr / awa@magasin.fr');
+  } else if (config.adminInitial.email && config.adminInitial.motDePasse) {
+    if (config.adminInitial.motDePasse.length < 12) {
+      console.error('\n⛔ ADMIN_MOT_DE_PASSE doit contenir au moins 12 caractères.\n');
+      process.exit(1);
+    }
+    // Coût 12 pour le compte le plus puissant du réseau
+    inserer.run(
+      'Administrateur',
+      config.adminInitial.email,
+      bcrypt.hashSync(config.adminInitial.motDePasse, 12),
+      'admin',
+      null
+    );
+    console.log(`👤 Compte administrateur créé : ${config.adminInitial.email}`);
+  } else {
+    console.error(
+      '\n⛔ AUCUN COMPTE EN BASE et les comptes de démonstration sont désactivés.\n' +
+        '   Définissez ADMIN_EMAIL et ADMIN_MOT_DE_PASSE (12 caractères minimum)\n' +
+        '   dans backend/.env, ou lancez avec COMPTES_DEMO=true pour un essai local.\n'
+    );
+    process.exit(1);
+  }
 }
 
 // 3) Produits de démonstration (fiche propre à la boutique 1)
@@ -293,5 +341,54 @@ if (db.prepare('SELECT COUNT(*) AS n FROM produits').get().n === 0) {
   produit.run('Riz blanc 1kg', 'Épicerie', 0.70, 1.20, 80, 10, '6001240100042');
   console.log('🛒 4 produits de démonstration créés (boutique : Magasin principal)');
 }
+
+// --- Garde-fou PRODUCTION : aucun mot de passe de démonstration ---
+// Ces mots de passe sont publics (documentation, code source) : les laisser
+// actifs sur un site accessible revient à publier un accès administrateur.
+// En production, le serveur REFUSE de démarrer tant qu'ils n'ont pas été
+// changés — même si la base a été créée il y a longtemps.
+const MOTS_DE_PASSE_DEMO = [
+  ...new Set(
+    [
+      'admin123',
+      'gerant123',
+      'employe123',
+      config.mdpDemo.admin,
+      config.mdpDemo.gerant,
+      config.mdpDemo.employe,
+    ].filter(Boolean)
+  ),
+];
+
+function verifierMotsDePasseDemo() {
+  if (!config.estProduction) return; // En développement, ces comptes sont voulus
+
+  const comptes = db.prepare('SELECT id, nom, email, mot_de_passe FROM utilisateurs').all();
+  const fautifs = [];
+
+  for (const compte of comptes) {
+    if (!compte.mot_de_passe) continue;
+    for (const motDePasse of MOTS_DE_PASSE_DEMO) {
+      if (bcrypt.compareSync(motDePasse, compte.mot_de_passe)) {
+        fautifs.push({ email: compte.email, nom: compte.nom, motDePasse });
+        break; // Un seul motif suffit à condamner le compte
+      }
+    }
+  }
+
+  if (fautifs.length === 0) return;
+
+  console.error('\n⛔ ARRÊT : mots de passe de DÉMONSTRATION encore actifs en production.\n');
+  for (const f of fautifs) {
+    console.error(`   • ${f.email} (${f.nom}) → mot de passe « ${f.motDePasse} »`);
+  }
+  console.error(
+    '\n   Ces mots de passe sont publics. Changez-les (écran Administration →\n' +
+      '   Comptes, ou en développement), puis relancez le serveur.\n'
+  );
+  process.exit(1);
+}
+
+verifierMotsDePasseDemo();
 
 module.exports = db;

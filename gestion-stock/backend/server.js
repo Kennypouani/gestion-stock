@@ -7,6 +7,7 @@ const express = require('express');   // Framework web pour créer l'API
 const cors = require('cors');         // Autorise le frontend (React) à appeler l'API
 const helmet = require('helmet');     // En-têtes HTTP de sécurité
 const db = require('./database');     // Notre connexion à la base de données
+const config = require('./config');   // Réglages lus dans l'environnement (.env)
 
 const produitRoutes = require('./routes/produits');   // Routes des produits
 const mouvementRoutes = require('./routes/mouvements'); // Routes des entrées/sorties de stock
@@ -20,13 +21,20 @@ const exportRoutes = require('./routes/export');       // Exports CSV (admin)
 const sauvegardeRoutes = require('./routes/sauvegardes'); // Sauvegardes (admin)
 const boutiqueRoutes = require('./routes/boutiques');   // Réseau de boutiques
 const sauvegarde = require('./sauvegarde');            // Sauvegarde automatique de la base
-const { verifierConnexion, exigerRole } = require('./auth'); // Middlewares d'auth
+const { verifierConnexion, exigerRole, purgerSessionsExpirees } = require('./auth'); // Middlewares d'auth
 
 const app = express();
-// Le port d'écoute : 5000 par défaut
-// On vérifie que la variable PORT de l'environnement est valide (nombre > 0),
-// sinon on utilise 5000 (sinon le serveur écoute sur un port inexistant)
-const PORT = (parseInt(process.env.PORT, 10) > 0) ? parseInt(process.env.PORT, 10) : 5000;
+// Le port d'écoute : PORT de l'environnement, sinon 5000
+const PORT = config.port;
+
+// --- Derrière un reverse proxy (Nginx, Caddy) ---
+// Sans ce réglage, toutes les requêtes semblent venir de la même IP
+// et le limiteur anti-force-brute bloquerait tout le monde à la fois
+// (ou ne verrait qu'un seul client). On ne fait confiance qu'au nombre
+// de sauts déclaré dans TRUST_PROXY, jamais à l'en-tête seul.
+if (config.trustProxy !== false) {
+  app.set('trust proxy', config.trustProxy);
+}
 
 // --- Middlewares (fonctions qui tournent avant chaque requête) ---
 // helmet : ajoute les en-têtes de sécurité (X-Frame-Options, anti-sniffing, etc.)
@@ -35,7 +43,8 @@ app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' },
 }));
 app.use(cors({
-  origin: ['http://localhost:3000'], // Seulement notre frontend React a le droit d'appeler l'API
+  // Seule(s) origine(s) déclarée(s) dans ORIGINE_FRONTEND ont le droit d'appeler l'API
+  origin: config.originesFrontend,
   credentials: true,                  // Autorise l'envoi du cookie de session
 }));
 app.use(express.json());     // Comprend le format JSON envoyé par le frontend
@@ -78,7 +87,15 @@ app.use((err, req, res, next) => {
 
 // --- Démarrage du serveur ---
 app.listen(PORT, () => {
-  console.log(`🚀 Serveur démarré sur http://localhost:${PORT}`);
+  console.log(`🚀 Serveur démarré sur http://localhost:${PORT} (${config.environnement})`);
+  // 🧹 Nettoyage des sessions expirées : au démarrage puis toutes les heures
+  const supprimees = purgerSessionsExpirees();
+  if (supprimees > 0) console.log(`🧹 ${supprimees} session(s) expirée(s) supprimée(s)`);
+  const minuterieSessions = setInterval(() => {
+    const n = purgerSessionsExpirees();
+    if (n > 0) console.log(`🧹 ${n} session(s) expirée(s) supprimée(s)`);
+  }, 60 * 60 * 1000);
+  minuterieSessions.unref?.(); // Ne bloque pas l'arrêt du serveur
   // 💾 Une copie de la base au démarrage, puis automatiquement toutes les 24 h
   sauvegarde.demarrerAutomatique();
 });

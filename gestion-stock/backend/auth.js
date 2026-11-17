@@ -6,6 +6,14 @@
 const crypto = require('crypto');
 const db = require('./database');
 
+// --- Empreinte d'un jeton de session ---
+// La base ne contient QUE le SHA-256 du jeton : une copie de stock.db
+// (sauvegarde, export, fuite) ne permet donc pas de rejouer une session.
+// Le jeton en clair n'existe que dans le cookie du navigateur.
+function hacherJeton(jeton) {
+  return crypto.createHash('sha256').update(String(jeton)).digest('hex');
+}
+
 // --- Lecture d'un cookie dans les en-têtes HTTP ---
 // Exemple d'en-tête : "Cookie: session=abc123; autre=valeur"
 function lireCookie(requete, nom) {
@@ -23,7 +31,7 @@ function utilisateurConnecte(requete) {
   const jeton = lireCookie(requete, 'session');
   if (!jeton) return null;
 
-  // On cherche la session en base ET on vérifie qu'elle n'est pas expirée
+  // On cherche l'EMPREINTE de la session en base ET on vérifie qu'elle n'est pas expirée
   // Le rôle ET la boutique sont relus EN BASE à chaque requête :
   // un changement de rôle / une désactivation prend effet immédiatement,
   // et rien ne vient du corps de la requête ni du cookie
@@ -37,7 +45,7 @@ function utilisateurConnecte(requete) {
         AND datetime(s.date_expiration) > datetime('now')
         AND u.actif = 1
     `)
-    .get(jeton);
+    .get(hacherJeton(jeton));
 
   if (!session) return null;
 
@@ -133,10 +141,11 @@ function creerSession(utilisateurId) {
   // Jeton impossible à deviner : 64 caractères aléatoires hexadécimaux
   const jeton = crypto.randomBytes(32).toString('hex');
   // Expiration : maintenant + 24 heures
+  // Seule l'empreinte du jeton est enregistrée en base
   db.prepare(`
     INSERT INTO sessions (jeton, utilisateur_id, date_expiration)
     VALUES (?, ?, datetime('now', '+24 hours'))
-  `).run(jeton, utilisateurId);
+  `).run(hacherJeton(jeton), utilisateurId);
   return jeton;
 }
 
@@ -144,8 +153,18 @@ function creerSession(utilisateurId) {
 function supprimerSession(requete) {
   const jeton = lireCookie(requete, 'session');
   if (jeton) {
-    db.prepare('DELETE FROM sessions WHERE jeton = ?').run(jeton);
+    db.prepare('DELETE FROM sessions WHERE jeton = ?').run(hacherJeton(jeton));
   }
+}
+
+// --- Nettoyage des sessions expirées ---
+// Appelé au démarrage puis périodiquement : la table ne grossit pas
+// indéfiniment et les jetons morts disparaissent réellement.
+function purgerSessionsExpirees() {
+  const { changes } = db
+    .prepare("DELETE FROM sessions WHERE datetime(date_expiration) <= datetime('now')")
+    .run();
+  return changes;
 }
 
 module.exports = {
@@ -153,6 +172,8 @@ module.exports = {
   exigerRole,
   creerSession,
   supprimerSession,
+  hacherJeton,
+  purgerSessionsExpirees,
   utilisateurConnecte,
   porteeBoutique,
   clauseBoutique,

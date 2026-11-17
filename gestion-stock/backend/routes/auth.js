@@ -7,7 +7,8 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const rateLimit = require('express-rate-limit'); // Anti force brute
 const db = require('../database');
-const { creerSession, supprimerSession, utilisateurConnecte, verifierConnexion } = require('../auth');
+const config = require('../config');
+const { creerSession, supprimerSession, hacherJeton, utilisateurConnecte, verifierConnexion } = require('../auth');
 
 const router = express.Router();
 
@@ -31,7 +32,10 @@ const OPTIONS_COOKIE = {
   sameSite: 'lax',                            // Bloque les requêtes forgées depuis d'autres sites
   path: '/',                                   // Disponible sur toute l'application
   maxAge: 24 * 60 * 60 * 1000,                // 24 heures en millisecondes
-  // secure: true,                           // → à activer en production avec HTTPS
+  // Secure : le cookie ne part que par HTTPS.
+  // Activé par défaut en production (COOKIE_SECURE), à laisser
+  // désactivé uniquement pour un test HTTP en local.
+  secure: config.cookieSecure,
 };
 
 // --- 1. CONNEXION ---
@@ -159,10 +163,12 @@ router.put('/mot-de-passe', verifierConnexion, limiteurMotDePasse, (req, res) =>
     db.prepare('UPDATE utilisateurs SET mot_de_passe = ? WHERE id = ?')
       .run(hache, utilisateur.id);
 
-    // Jeton de la session courante (à conserver)
+    // Jeton de la session courante (à conserver) — comparé sous forme d'empreinte
     const cookies = String(req.headers.cookie || '').split(';').map((c) => c.trim());
     const courant = cookies.find((c) => c.startsWith('session='));
-    const jetonCourant = courant ? courant.slice('session='.length) : null;
+    const jetonCourant = courant
+      ? hacherJeton(decodeURIComponent(courant.slice('session='.length)))
+      : null;
 
     // Fermeture des autres sessions
     const fermees = jetonCourant

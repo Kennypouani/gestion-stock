@@ -16,3 +16,7 @@ gestion-stock/frontend/dist/
 .vscode/
 .idea/
 .DS_Store
+# --- Secrets / configuration locale (jamais versionnés) ---
+gestion-stock/backend/.env
+gestion-stock/backend/.env.*
+!gestion-stock/backend/.env.example
