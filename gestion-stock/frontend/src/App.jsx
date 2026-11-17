@@ -30,6 +30,13 @@ function App() {
       .finally(() => setVerification(false));
   }, []);
 
+  // Recharge l'utilisateur courant (après un changement de mot de passe imposé)
+  function rafraichirUtilisateur() {
+    return getUtilisateurCourant()
+      .then((u) => setUtilisateur(u))
+      .catch(() => setUtilisateur(null));
+  }
+
   async function seDeconnecter() {
     try {
       await deconnexion();
@@ -47,6 +54,17 @@ function App() {
   // --- Non connecté → uniquement la page de connexion ---
   if (!utilisateur) {
     return <Connexion onConnecte={setUtilisateur} />;
+  }
+
+  // --- Mot de passe à changer avant tout usage ---
+  // Le serveur refuse toutes les autres routes dans ce cas (403) :
+  // on n'affiche donc que l'écran de changement, sans navigation.
+  if (utilisateur.changement_obligatoire) {
+    return (
+      <div className="page-connexion">
+        <ChangerMotDePasse obligatoire onTermine={rafraichirUtilisateur} />
+      </div>
+    );
   }
 
   const estAdmin = utilisateur.role === 'admin';

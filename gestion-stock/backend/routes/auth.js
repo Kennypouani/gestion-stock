@@ -9,6 +9,7 @@ const rateLimit = require('express-rate-limit'); // Anti force brute
 const db = require('../database');
 const config = require('../config');
 const { creerSession, supprimerSession, hacherJeton, utilisateurConnecte, verifierConnexion } = require('../auth');
+const { estMotDePasseDemo } = require('../motsDePasse');
 
 const router = express.Router();
 
@@ -24,6 +25,26 @@ function avecBoutique(utilisateur) {
     if (boutique) utilisateur.boutique = boutique;
   }
   return utilisateur;
+}
+
+// --- État du mot de passe, ajouté aux réponses de session ---
+// changement_obligatoire = vrai UNIQUEMENT si la sécurité stricte est active :
+// le frontend n'affiche l'écran bloquant que lorsque le serveur le refuse vraiment.
+function avecEtatMotDePasse(utilisateur) {
+  if (!utilisateur) return utilisateur;
+  const aChanger = utilisateur.mot_de_passe_a_changer === true;
+  utilisateur.mot_de_passe_a_changer = aChanger;
+  utilisateur.changement_obligatoire = config.securiteStricte && aChanger;
+  return utilisateur;
+}
+
+// --- Refus d'un mot de passe public (démonstration) ---
+// Actif en sécurité stricte : la valeur ne doit jamais revenir en base,
+// ni par une création, ni par une réinitialisation, ni par un changement volontaire.
+function refusMotDePasseDemo(motDePasse) {
+  if (!config.securiteStricte) return null;
+  if (!estMotDePasseDemo(motDePasse)) return null;
+  return 'Ce mot de passe fait partie des mots de passe de démonstration publics — choisissez-en un autre';
 }
 
 // Options du cookie de sécurité
@@ -87,13 +108,16 @@ router.post('/connexion', limiteurConnexion, (req, res) => {
 
     // On ne renvoie JAMAIS le mot de passe haché
     res.json(
-      avecBoutique({
-        id: utilisateur.id,
-        nom: utilisateur.nom,
-        email: utilisateur.email,
-        role: utilisateur.role,
-        boutique_id: utilisateur.boutique_id ?? null,
-      })
+      avecEtatMotDePasse(
+        avecBoutique({
+          id: utilisateur.id,
+          nom: utilisateur.nom,
+          email: utilisateur.email,
+          role: utilisateur.role,
+          boutique_id: utilisateur.boutique_id ?? null,
+          mot_de_passe_a_changer: utilisateur.mot_de_passe_a_changer === 1,
+        })
+      )
     );
   } catch (err) {
     console.error('Erreur connexion :', err.message);
@@ -124,7 +148,7 @@ router.get('/moi', (req, res) => {
 
   // On ajoute le nom + le code de SA boutique : l'en-tête de l'application
   // affiche ainsi « GÉRANT · Magasin principal » sans autre appel API.
-  res.json(avecBoutique(utilisateur));
+  res.json(avecEtatMotDePasse(avecBoutique(utilisateur)));
 });
 
 // --- 4. CHANGER SON PROPRE MOT DE PASSE ---
@@ -148,6 +172,10 @@ router.put('/mot-de-passe', verifierConnexion, limiteurMotDePasse, (req, res) =>
   if (nouveau_mot_de_passe === ancien_mot_de_passe) {
     return res.status(400).json({ erreur: 'Le nouveau mot de passe doit être différent de l’ancien' });
   }
+  const refusDemo = refusMotDePasseDemo(nouveau_mot_de_passe);
+  if (refusDemo) {
+    return res.status(400).json({ erreur: refusDemo });
+  }
 
   try {
     const utilisateur = db
@@ -159,8 +187,9 @@ router.put('/mot-de-passe', verifierConnexion, limiteurMotDePasse, (req, res) =>
       return res.status(401).json({ erreur: 'Ancien mot de passe incorrect' });
     }
 
+    // Le mot de passe est choisi par l'utilisateur : plus de changement imposé
     const hache = bcrypt.hashSync(nouveau_mot_de_passe, 10);
-    db.prepare('UPDATE utilisateurs SET mot_de_passe = ? WHERE id = ?')
+    db.prepare('UPDATE utilisateurs SET mot_de_passe = ?, mot_de_passe_a_changer = 0 WHERE id = ?')
       .run(hache, utilisateur.id);
 
     // Jeton de la session courante (à conserver) — comparé sous forme d'empreinte
@@ -180,6 +209,7 @@ router.put('/mot-de-passe', verifierConnexion, limiteurMotDePasse, (req, res) =>
     res.json({
       message: 'Mot de passe modifié',
       autres_sessions_fermees: fermees,
+      changement_obligatoire: false,
     });
   } catch (err) {
     console.error('Erreur changement mot de passe :', err.message);

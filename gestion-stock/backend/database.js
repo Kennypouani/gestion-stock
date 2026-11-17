@@ -13,6 +13,7 @@
 
 const { DatabaseSync } = require('node:sqlite');
 const config = require('./config'); // Réglages lus dans l'environnement (.env)
+const { estHashDemo } = require('./motsDePasse'); // Détection des mots de passe publics
 const db = new DatabaseSync('stock.db'); // Crée le fichier stock.db s'il n'existe pas
 
 // Active les clés étrangères (relations entre tables)
@@ -255,6 +256,8 @@ ajouterColonneSiAbsente('ventes', 'boutique_id', 'INTEGER NOT NULL DEFAULT 1');
 ajouterColonneSiAbsente('commandes', 'boutique_id', 'INTEGER NOT NULL DEFAULT 1');
 ajouterColonneSiAbsente('mouvements', 'boutique_id', 'INTEGER NOT NULL DEFAULT 1');
 ajouterColonneSiAbsente('journal', 'boutique_id', 'INTEGER NOT NULL DEFAULT 1');
+// Drapeau « doit changer son mot de passe » (1 = changement imposé)
+ajouterColonneSiAbsente('utilisateurs', 'mot_de_passe_a_changer', 'INTEGER NOT NULL DEFAULT 0');
 
 // GARDE-FOU : la contrainte UNIQUE(code_barre, boutique_id) ne peut pas
 // s'ajouter par ALTER. Une base héritée (restaurée d'une ancienne sauvegarde)
@@ -347,33 +350,37 @@ if (db.prepare('SELECT COUNT(*) AS n FROM produits').get().n === 0) {
 // actifs sur un site accessible revient à publier un accès administrateur.
 // En production, le serveur REFUSE de démarrer tant qu'ils n'ont pas été
 // changés — même si la base a été créée il y a longtemps.
-const MOTS_DE_PASSE_DEMO = [
-  ...new Set(
-    [
-      'admin123',
-      'gerant123',
-      'employe123',
-      config.mdpDemo.admin,
-      config.mdpDemo.gerant,
-      config.mdpDemo.employe,
-    ].filter(Boolean)
-  ),
-];
+//
+// Le drapeau mot_de_passe_a_changer est posé à CHAQUE démarrage, sur la base
+// du hachage réellement enregistré : impossible de le contourner depuis le
+// client. En sécurité stricte, la connexion suivante impose le changement.
+function marquerMotsDePasseDemo() {
+  const comptes = db
+    .prepare('SELECT id, email, mot_de_passe, mot_de_passe_a_changer FROM utilisateurs')
+    .all();
+  const marques = [];
+
+  for (const compte of comptes) {
+    if (compte.mot_de_passe_a_changer === 1) continue; // Déjà signalé : inutile de refaire le calcul
+    if (!estHashDemo(compte.mot_de_passe)) continue;
+    db.prepare('UPDATE utilisateurs SET mot_de_passe_a_changer = 1 WHERE id = ?').run(compte.id);
+    marques.push(compte.email);
+  }
+
+  if (marques.length > 0) {
+    console.log(`🔒 Changement de mot de passe imposé au prochain login : ${marques.join(', ')}`);
+  }
+}
 
 function verifierMotsDePasseDemo() {
   if (!config.estProduction) return; // En développement, ces comptes sont voulus
 
-  const comptes = db.prepare('SELECT id, nom, email, mot_de_passe FROM utilisateurs').all();
+  const comptes = db.prepare('SELECT nom, email, mot_de_passe FROM utilisateurs').all();
   const fautifs = [];
 
   for (const compte of comptes) {
-    if (!compte.mot_de_passe) continue;
-    for (const motDePasse of MOTS_DE_PASSE_DEMO) {
-      if (bcrypt.compareSync(motDePasse, compte.mot_de_passe)) {
-        fautifs.push({ email: compte.email, nom: compte.nom, motDePasse });
-        break; // Un seul motif suffit à condamner le compte
-      }
-    }
+    const motDePasse = estHashDemo(compte.mot_de_passe);
+    if (motDePasse) fautifs.push({ email: compte.email, nom: compte.nom, motDePasse });
   }
 
   if (fautifs.length === 0) return;
@@ -390,5 +397,6 @@ function verifierMotsDePasseDemo() {
 }
 
 verifierMotsDePasseDemo();
+marquerMotsDePasseDemo();
 
 module.exports = db;

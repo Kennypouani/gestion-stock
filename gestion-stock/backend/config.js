@@ -65,6 +65,15 @@ const cookieSecure = booleen(process.env.COOKIE_SECURE, estProduction);
 // Créés UNIQUEMENT hors production, sauf demande explicite.
 const comptesDemo = booleen(process.env.COMPTES_DEMO, !estProduction);
 
+// Sécurité stricte des mots de passe :
+//   • refuse un mot de passe de démonstration à la création,
+//     à la réinitialisation et au changement volontaire ;
+//   • oblige les comptes qui en utilisent encore un à le changer
+//     dès leur prochaine connexion.
+// Active par défaut en production ; à forcer à la main (SECURITE_STRICTE=true)
+// pour reproduire ce comportement en local.
+const securiteStricte = booleen(process.env.SECURITE_STRICTE, estProduction);
+
 // Mots de passe des comptes de démonstration (surchargables)
 const mdpDemo = {
   admin: texte(process.env.MDP_DEMO_ADMIN) || 'admin123',
@@ -91,6 +100,11 @@ if (estProduction && comptesDemo) {
       'À désactiver dès que les vrais comptes existent.'
   );
 }
+if (estProduction && !securiteStricte) {
+  console.warn(
+    '⚠️  SECURITE_STRICTE=false en production : les mots de passe de démonstration restent autorisés.'
+  );
+}
 
 module.exports = {
   environnement,
@@ -99,6 +113,7 @@ module.exports = {
   originesFrontend,
   trustProxy,
   cookieSecure,
+  securiteStricte,
   comptesDemo,
   mdpDemo,
   adminInitial,

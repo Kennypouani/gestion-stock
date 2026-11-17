@@ -8,6 +8,8 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const db = require('../database');
+const config = require('../config');
+const { estMotDePasseDemo } = require('../motsDePasse');
 
 const router = express.Router();
 
@@ -36,6 +38,13 @@ function resoudreBoutique(role, valeur) {
   return { valeur: id };
 }
 
+// Refus d'un mot de passe de démonstration (public) en sécurité stricte
+function refusMotDePasseDemo(motDePasse) {
+  if (!config.securiteStricte) return null;
+  if (!estMotDePasseDemo(motDePasse)) return null;
+  return 'Ce mot de passe fait partie des mots de passe de démonstration publics — choisissez-en un autre';
+}
+
 // Retourne un utilisateur SENSIBLE (jamais le mot de passe haché)
 function sansMotDePasse(utilisateur) {
   const { mot_de_passe, ...sans } = utilisateur;
@@ -51,6 +60,7 @@ router.get('/', (req, res) => {
     const liste = db
       .prepare(`
         SELECT u.id, u.nom, u.email, u.role, u.boutique_id, u.actif, u.date_creation,
+               u.mot_de_passe_a_changer,
                b.nom AS boutique_nom, b.code AS boutique_code
         FROM utilisateurs u
         LEFT JOIN boutiques b ON b.id = u.boutique_id
@@ -86,6 +96,10 @@ router.post('/', (req, res) => {
   if (!ROLES_VALIDES.includes(role)) {
     return res.status(400).json({ erreur: 'Rôle invalide (attendu : employe, gerant ou admin)' });
   }
+  const refusDemo = refusMotDePasseDemo(mot_de_passe);
+  if (refusDemo) {
+    return res.status(400).json({ erreur: refusDemo });
+  }
 
   // --- Rattachement à la boutique (refusé si invalide) ---
   const boutique = resoudreBoutique(role, boutique_id);
@@ -104,16 +118,18 @@ router.post('/', (req, res) => {
 
     // Hachage bcrypt : le mot de passe n'est JAMAIS stocké en clair
     const hash = bcrypt.hashSync(mot_de_passe, 10);
+    // Le mot de passe initial est choisi par l'administrateur :
+    // la personne devra le remplacer à sa première connexion (sécurité stricte).
     const resultat = db
       .prepare(`
-        INSERT INTO utilisateurs (nom, email, mot_de_passe, role, boutique_id)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO utilisateurs (nom, email, mot_de_passe, role, boutique_id, mot_de_passe_a_changer)
+        VALUES (?, ?, ?, ?, ?, 1)
       `)
       .run(nom.trim(), emailPropre, hash, role, boutique.valeur);
 
     const cree = db
       .prepare(`
-        SELECT id, nom, email, role, boutique_id, actif, date_creation
+        SELECT id, nom, email, role, boutique_id, actif, date_creation, mot_de_passe_a_changer
         FROM utilisateurs WHERE id = ?
       `)
       .get(resultat.lastInsertRowid);
@@ -213,7 +229,7 @@ router.put('/:id', (req, res) => {
 
     const misAJour = db
       .prepare(`
-        SELECT id, nom, email, role, boutique_id, actif, date_creation
+        SELECT id, nom, email, role, boutique_id, actif, date_creation, mot_de_passe_a_changer
         FROM utilisateurs WHERE id = ?
       `)
       .get(cibleId);
@@ -237,6 +253,10 @@ router.put('/:id/mot-de-passe', (req, res) => {
       .status(400)
       .json({ erreur: `Le mot de passe doit contenir au moins ${LONGUEUR_MIN_MDP} caractères` });
   }
+  const refusDemo = refusMotDePasseDemo(mot_de_passe);
+  if (refusDemo) {
+    return res.status(400).json({ erreur: refusDemo });
+  }
 
   try {
     const cible = db.prepare('SELECT id FROM utilisateurs WHERE id = ?').get(cibleId);
@@ -244,8 +264,11 @@ router.put('/:id/mot-de-passe', (req, res) => {
       return res.status(404).json({ erreur: 'Compte introuvable' });
     }
 
+    // Mot de passe provisoire fixé par l'administrateur :
+    // la personne doit en choisir un autre à sa prochaine connexion.
     const hash = bcrypt.hashSync(mot_de_passe, 10);
-    db.prepare('UPDATE utilisateurs SET mot_de_passe = ? WHERE id = ?').run(hash, cibleId);
+    db.prepare('UPDATE utilisateurs SET mot_de_passe = ?, mot_de_passe_a_changer = 1 WHERE id = ?')
+      .run(hash, cibleId);
 
     // Sécurité : on détruit les sessions existantes de ce compte,
     // pour que la personne soit obligée de se reconnecter avec le nouveau mot de passe

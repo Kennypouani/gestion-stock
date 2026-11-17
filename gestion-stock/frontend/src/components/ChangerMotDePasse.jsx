@@ -2,17 +2,23 @@
 // CHANGEMENT DE MOT DE PASSE — Modale accessible à TOUS les rôles
 // Le serveur exige l'ancien mot de passe et ferme les autres
 // sessions après le changement.
+//
+// Mode « obligatoire » : plus de fermeture possible, l'application
+// reste bloquée tant que le mot de passe n'a pas été remplacé
+// (compte qui utilise encore un mot de passe de démonstration ou
+// un mot de passe provisoire fixé par l'administrateur).
 // ============================================================
 
 import { useState } from 'react';
 import { changerMotDePasse } from '../api';
 
-function ChangerMotDePasse({ onFerme }) {
+function ChangerMotDePasse({ onFerme, obligatoire = false, onTermine }) {
   const [ancien, setAncien] = useState('');
   const [nouveau, setNouveau] = useState('');
   const [confirmation, setConfirmation] = useState('');
   const [message, setMessage] = useState(null);
   const [envoi, setEnvoi] = useState(false);
+  const [termine, setTermine] = useState(false);
 
   async function soumettre(e) {
     e.preventDefault();
@@ -44,6 +50,7 @@ function ChangerMotDePasse({ onFerme }) {
       setAncien('');
       setNouveau('');
       setConfirmation('');
+      if (obligatoire) setTermine(true);
     } catch (err) {
       setMessage({ type: 'erreur', texte: `❌ ${err.message}` });
     } finally {
@@ -51,13 +58,41 @@ function ChangerMotDePasse({ onFerme }) {
     }
   }
 
+  // --- Écran final du mode obligatoire : on laisse entrer dans l'application ---
+  if (termine) {
+    return (
+      <div className="modale-fond">
+        <div className="modale modale-petite">
+          <div className="modale-entete">
+            <h2>✅ Mot de passe enregistré</h2>
+          </div>
+          {message && <div className="message message-succes">{message.texte}</div>}
+          <div className="actions-formulaire">
+            <button type="button" className="btn-principal" onClick={onTermine}>
+              Continuer
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="modale-fond" onClick={onFerme}>
+    <div className="modale-fond" onClick={obligatoire ? undefined : onFerme}>
       <div className="modale modale-petite" onClick={(e) => e.stopPropagation()}>
         <div className="modale-entete">
-          <h2>🔑 Changer mon mot de passe</h2>
-          <button className="modale-fermer" onClick={onFerme}>✕</button>
+          <h2>{obligatoire ? '🔒 Nouveau mot de passe obligatoire' : '🔑 Changer mon mot de passe'}</h2>
+          {!obligatoire && (
+            <button className="modale-fermer" onClick={onFerme}>✕</button>
+          )}
         </div>
+
+        {obligatoire && (
+          <div className="message message-erreur">
+            Votre compte utilise encore un mot de passe public. Choisissez un mot de
+            passe personnel pour accéder à l'application.
+          </div>
+        )}
 
         {message && (
           <div className={`message ${message.type === 'erreur' ? 'message-erreur' : 'message-succes'}`}>
@@ -101,9 +136,11 @@ function ChangerMotDePasse({ onFerme }) {
             <button type="submit" className="btn-principal" disabled={envoi}>
               {envoi ? 'Enregistrement…' : '💾 Enregistrer'}
             </button>
-            <button type="button" className="btn-secondaire" onClick={onFerme}>
-              Annuler
-            </button>
+            {!obligatoire && (
+              <button type="button" className="btn-secondaire" onClick={onFerme}>
+                Annuler
+              </button>
+            )}
           </div>
         </form>
 

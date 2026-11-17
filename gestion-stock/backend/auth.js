@@ -5,6 +5,7 @@
 
 const crypto = require('crypto');
 const db = require('./database');
+const config = require('./config');
 
 // --- Empreinte d'un jeton de session ---
 // La base ne contient QUE le SHA-256 du jeton : une copie de stock.db
@@ -38,7 +39,7 @@ function utilisateurConnecte(requete) {
   const session = db
     .prepare(`
       SELECT s.utilisateur_id, s.date_expiration,
-             u.nom, u.email, u.role, u.boutique_id, u.actif
+             u.nom, u.email, u.role, u.boutique_id, u.actif, u.mot_de_passe_a_changer
       FROM sessions s
       JOIN utilisateurs u ON u.id = s.utilisateur_id
       WHERE s.jeton = ?
@@ -55,6 +56,7 @@ function utilisateurConnecte(requete) {
     email: session.email,
     role: session.role,
     boutique_id: session.boutique_id ?? null,
+    mot_de_passe_a_changer: session.mot_de_passe_a_changer === 1,
   };
 }
 
@@ -107,6 +109,15 @@ function boutiqueCible(requete, corps = {}) {
   return Number.isInteger(id) && id > 0 ? id : null;
 }
 
+// --- Routes encore accessibles quand un changement de mot de passe est imposé ---
+// Sinon l'utilisateur serait enfermé : impossible de changer son mot de passe,
+// de se déconnecter ou de connaître son état.
+const ROUTES_AUTORISEES_MDP = [
+  '/api/auth/mot-de-passe',
+  '/api/auth/deconnexion',
+  '/api/auth/moi',
+];
+
 // --- Middleware 1 : impose d'être connecté (sinon 401) ---
 function verifierConnexion(requete, reponse, suite) {
   const utilisateur = utilisateurConnecte(requete);
@@ -116,6 +127,22 @@ function verifierConnexion(requete, reponse, suite) {
     });
   }
   requete.utilisateur = utilisateur; // Rend l'utilisateur dispo dans la route
+
+  // En sécurité stricte, un compte qui utilise encore un mot de passe public
+  // (démonstration ou imposé par un administrateur) ne peut RIEN faire
+  // d'autre que le changer. Le contrôle est côté serveur : masquer l'écran
+  // dans l'interface ne suffirait pas.
+  if (
+    config.securiteStricte &&
+    utilisateur.mot_de_passe_a_changer &&
+    !ROUTES_AUTORISEES_MDP.includes(requete.originalUrl.split('?')[0])
+  ) {
+    return reponse.status(403).json({
+      erreur: 'Changement de mot de passe requis avant de continuer',
+      code: 'CHANGEMENT_MOT_DE_PASSE_REQUIS',
+    });
+  }
+
   suite();
 }
 
