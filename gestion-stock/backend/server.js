@@ -54,6 +54,16 @@ app.use('/api/auth', authRoutes);             // POST /api/auth/connexion, etc.
 app.get('/api/sante', (req, res) => {
   res.json({ statut: 'ok', message: 'Le serveur fonctionne ✅' });
 });
+// Réglages publics lus par le frontend AVANT la connexion.
+// Aucune donnée sensible : uniquement ce que l'écran de login doit adapter.
+app.get('/api/config', (req, res) => {
+  // no-store : un navigateur ne doit pas garder un ancien mode en cache
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({
+    securite_stricte: config.securiteStricte,
+    comptes_demo: config.comptesDemo,
+  });
+});
 
 // --- Routes protégées (connexion OBLIGATOIRE) ---
 // Produits (stock) et ventes : tous les rôles connectés,

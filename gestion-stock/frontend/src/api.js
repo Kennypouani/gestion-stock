@@ -28,6 +28,11 @@ async function requete(url, options = {}) {
   return reponse.json();
 }
 
+// --- Réglages publics (avant connexion) ---
+// Sert à l'écran de login : en sécurité stricte, les comptes de
+// démonstration ne doivent pas être proposés.
+export const getConfigPublique = () => requete(`${BASE}/config`);
+
 // --- Authentification ---
 export const connexion = (email, motDePasse) =>
   requete(`${BASE}/auth/connexion`, {
