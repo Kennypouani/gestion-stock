@@ -289,14 +289,35 @@ function restaurerCompte(idsBoutiques, contenu) {
   const commandeLignes = liste('commande_lignes');
   const journal = liste('journal');
 
-  const utilisateurExiste = (id) =>
-    Number.isInteger(Number(id)) && !!db.prepare('SELECT 1 FROM utilisateurs WHERE id = ?').get(id);
+  // --- Outils de lecture tolérants ---
+  // Le fichier vient d'un export : une valeur absente ou aberrante ne doit
+  // jamais faire échouer la restauration.
+  const autorisees = new Set(idsFichier);
+  const dansFichier = (ligne) => autorisees.has(Number(ligne.boutique_id));
+  const nombre = (valeur, defaut = 0) => {
+    const n = Number(valeur);
+    return Number.isFinite(n) ? n : defaut;
+  };
+  const entier = (valeur, defaut) => {
+    const n = Number(valeur);
+    return Number.isInteger(n) ? n : defaut;
+  };
+  const texteCourt = (valeur, max, defaut) => String(valeur || defaut).slice(0, max);
+
+  // Un auteur supprimé depuis la sauvegarde devient NULL (jamais un id étranger)
+  const trouverUtilisateur = db.prepare('SELECT 1 FROM utilisateurs WHERE id = ?');
+  const utilisateurValide = (id) =>
+    Number.isInteger(Number(id)) && trouverUtilisateur.get(Number(id)) ? Number(id) : null;
 
   // Numéro unique : on suffixe en cas de collision avec une autre boutique
+  const numerosPris = {
+    ventes: db.prepare('SELECT 1 FROM ventes WHERE numero = ?'),
+    commandes: db.prepare('SELECT 1 FROM commandes WHERE numero = ?'),
+  };
   const numeroLibre = (table, numero) => {
     let candidat = String(numero || '').trim() || 'SANS-NUMERO';
     let n = 1;
-    while (db.prepare(`SELECT 1 FROM ${table} WHERE numero = ?`).get(candidat)) {
+    while (numerosPris[table].get(candidat)) {
       candidat = `${numero}-R${n}`;
       n += 1;
     }
@@ -313,41 +334,71 @@ function restaurerCompte(idsBoutiques, contenu) {
     ignores: 0,
   };
 
+  // Requêtes préparées UNE fois (elles étaient reconstruites à chaque tour)
+  const SUPPRESSIONS_DEPENDANCES = [
+    'DELETE FROM journal WHERE boutique_id = ?',
+    'DELETE FROM mouvements WHERE boutique_id = ?',
+    'DELETE FROM vente_lignes WHERE vente_id IN (SELECT id FROM ventes WHERE boutique_id = ?)',
+    'DELETE FROM ventes WHERE boutique_id = ?',
+    'DELETE FROM commande_lignes WHERE commande_id IN (SELECT id FROM commandes WHERE boutique_id = ?)',
+    'DELETE FROM commandes WHERE boutique_id = ?',
+  ].map((sql) => db.prepare(sql));
+  const SUPPRESSIONS_RACINES = [
+    'DELETE FROM produits WHERE boutique_id = ?',
+    'DELETE FROM fournisseurs WHERE boutique_id = ?',
+  ].map((sql) => db.prepare(sql));
+
+  // Correspondances ancien id → nouvel id, remplies au fil de la restauration
+  const mapFournisseurs = new Map();
+  const mapProduits = new Map();
+  const mapVentes = new Map();
+  const mapCommandes = new Map();
+
+  // Lignes de vente et de commande : même forme, seuls la table et la
+  // clé du parent changent. Une ligne orpheline est comptée, jamais bloquante.
+  const insererLignes = (requete, lignes, mapParents, cleParent) => {
+    for (const ligne of lignes) {
+      const parentId = mapParents.get(Number(ligne[cleParent]));
+      const produitId = mapProduits.get(Number(ligne.produit_id));
+      if (!parentId || !produitId) {
+        compte.ignores += 1;
+        continue;
+      }
+      requete.run(
+        parentId,
+        produitId,
+        texteCourt(ligne.produit_nom, 120, 'Article'),
+        nombre(ligne.quantite, 1) || 1,
+        nombre(ligne.prix_unitaire),
+        nombre(ligne.sous_total)
+      );
+    }
+  };
+
   db.exec('BEGIN');
   try {
     // --- 1. On vide les boutiques concernées (remplacement, pas fusion) ---
-    // DEUX PASSES : d'abord TOUTES les lignes dépendantes de toutes les
-    // boutiques du fichier, ensuite les produits et fournisseurs.
-    // Sinon une vieille commande d'une boutique du fichier encore liée à
-    // un produit d'une AUTRE boutique du fichier bloque la suppression
-    // (contrainte de clé étrangère).
+    // DEUX PASSES obligatoires : les lignes dépendantes de TOUTES les
+    // boutiques d'abord, les produits et fournisseurs ensuite. Une vieille
+    // commande d'une boutique du fichier peut encore pointer vers un produit
+    // d'une AUTRE boutique du fichier : supprimer produit par produit
+    // déclencherait une violation de clé étrangère.
     for (const id of idsFichier) {
-      db.prepare('DELETE FROM journal WHERE boutique_id = ?').run(id);
-      db.prepare('DELETE FROM mouvements WHERE boutique_id = ?').run(id);
-      db.prepare(
-        'DELETE FROM vente_lignes WHERE vente_id IN (SELECT id FROM ventes WHERE boutique_id = ?)'
-      ).run(id);
-      db.prepare('DELETE FROM ventes WHERE boutique_id = ?').run(id);
-      db.prepare(
-        'DELETE FROM commande_lignes WHERE commande_id IN (SELECT id FROM commandes WHERE boutique_id = ?)'
-      ).run(id);
-      db.prepare('DELETE FROM commandes WHERE boutique_id = ?').run(id);
+      for (const requete of SUPPRESSIONS_DEPENDANCES) requete.run(id);
     }
     for (const id of idsFichier) {
-      db.prepare('DELETE FROM produits WHERE boutique_id = ?').run(id);
-      db.prepare('DELETE FROM fournisseurs WHERE boutique_id = ?').run(id);
+      for (const requete of SUPPRESSIONS_RACINES) requete.run(id);
     }
 
-    // --- 2. Fournisseurs (ids d'origine → nouveaux ids) ---
-    const mapFournisseurs = new Map();
+    // --- 2. Fournisseurs ---
     const insererFournisseur = db.prepare(`
       INSERT INTO fournisseurs (nom, contact_nom, email, telephone, adresse, actif, date_creation, boutique_id)
       VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')), ?)
     `);
     for (const f of fournisseurs) {
-      if (!idsFichier.includes(Number(f.boutique_id))) continue;
+      if (!dansFichier(f)) continue;
       const r = insererFournisseur.run(
-        String(f.nom || 'Fournisseur').slice(0, 80),
+        texteCourt(f.nom, 80, 'Fournisseur'),
         f.contact_nom ?? null,
         f.email ?? null,
         f.telephone ?? null,
@@ -361,22 +412,21 @@ function restaurerCompte(idsBoutiques, contenu) {
     }
 
     // --- 3. Produits ---
-    const mapProduits = new Map();
     const insererProduit = db.prepare(`
       INSERT INTO produits (nom, categorie, prix_achat, prix_vente, quantite, seuil_alerte,
                              code_barre, date_expiration, date_creation, boutique_id)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')), ?)
     `);
     for (const p of produits) {
-      if (!idsFichier.includes(Number(p.boutique_id))) continue;
+      if (!dansFichier(p)) continue;
       try {
         const r = insererProduit.run(
-          String(p.nom || 'Produit').slice(0, 120),
+          texteCourt(p.nom, 120, 'Produit'),
           p.categorie ?? 'Divers',
-          Number(p.prix_achat) || 0,
-          Number(p.prix_vente) || 0,
-          Number.isInteger(Number(p.quantite)) ? Number(p.quantite) : 0,
-          Number.isInteger(Number(p.seuil_alerte)) ? Number(p.seuil_alerte) : 5,
+          nombre(p.prix_achat),
+          nombre(p.prix_vente),
+          entier(p.quantite, 0),
+          entier(p.seuil_alerte, 5),
           p.code_barre ?? null,
           p.date_expiration ?? null,
           p.date_creation ?? null,
@@ -396,7 +446,7 @@ function restaurerCompte(idsBoutiques, contenu) {
       VALUES (?, ?, ?, ?, COALESCE(?, datetime('now')), ?, ?, ?, ?)
     `);
     for (const m of mouvements) {
-      if (!idsFichier.includes(Number(m.boutique_id))) continue;
+      if (!dansFichier(m)) continue;
       const produitId = mapProduits.get(Number(m.produit_id));
       if (!produitId) {
         compte.ignores += 1;
@@ -405,10 +455,10 @@ function restaurerCompte(idsBoutiques, contenu) {
       insererMouvement.run(
         produitId,
         m.type === 'sortie' ? 'sortie' : 'entree',
-        Number(m.quantite) || 0,
+        nombre(m.quantite),
         m.motif ?? null,
         m.date_mouvement ?? null,
-        utilisateurExiste(m.utilisateur_id) ? Number(m.utilisateur_id) : null,
+        utilisateurValide(m.utilisateur_id),
         m.utilisateur_nom ?? null,
         m.utilisateur_role ?? null,
         Number(m.boutique_id)
@@ -417,26 +467,25 @@ function restaurerCompte(idsBoutiques, contenu) {
     }
 
     // --- 5. Ventes et leurs lignes ---
-    const mapVentes = new Map();
     const insererVente = db.prepare(`
       INSERT INTO ventes (numero, sous_total, remise, total, moyen_paiement, montant_verse,
                           monnaie_rendue, utilisateur_id, utilisateur_nom, date_vente, boutique_id)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')), ?)
     `);
     for (const v of ventes) {
-      if (!idsFichier.includes(Number(v.boutique_id))) continue;
+      if (!dansFichier(v)) continue;
       const moyen = ['especes', 'carte', 'mobile'].includes(v.moyen_paiement)
         ? v.moyen_paiement
         : 'especes';
       const r = insererVente.run(
         numeroLibre('ventes', v.numero),
-        Number(v.sous_total) || 0,
-        Number(v.remise) || 0,
-        Number(v.total) || 0,
+        nombre(v.sous_total),
+        nombre(v.remise),
+        nombre(v.total),
         moyen,
         v.montant_verse ?? null,
         v.monnaie_rendue ?? null,
-        utilisateurExiste(v.utilisateur_id) ? Number(v.utilisateur_id) : null,
+        utilisateurValide(v.utilisateur_id),
         v.utilisateur_nom ?? null,
         v.date_vente ?? null,
         Number(v.boutique_id)
@@ -449,25 +498,9 @@ function restaurerCompte(idsBoutiques, contenu) {
       INSERT INTO vente_lignes (vente_id, produit_id, produit_nom, quantite, prix_unitaire, sous_total)
       VALUES (?, ?, ?, ?, ?, ?)
     `);
-    for (const l of venteLignes) {
-      const venteId = mapVentes.get(Number(l.vente_id));
-      const produitId = mapProduits.get(Number(l.produit_id));
-      if (!venteId || !produitId) {
-        compte.ignores += 1;
-        continue;
-      }
-      insererVenteLigne.run(
-        venteId,
-        produitId,
-        String(l.produit_nom || 'Article').slice(0, 120),
-        Number(l.quantite) || 1,
-        Number(l.prix_unitaire) || 0,
-        Number(l.sous_total) || 0
-      );
-    }
+    insererLignes(insererVenteLigne, venteLignes, mapVentes, 'vente_id');
 
     // --- 6. Commandes et leurs lignes ---
-    const mapCommandes = new Map();
     const insererCommande = db.prepare(`
       INSERT INTO commandes (numero, fournisseur_id, statut, montant_total, notes,
                              utilisateur_id, utilisateur_nom, recu_par,
@@ -475,7 +508,7 @@ function restaurerCompte(idsBoutiques, contenu) {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')), ?, ?)
     `);
     for (const c of commandes) {
-      if (!idsFichier.includes(Number(c.boutique_id))) continue;
+      if (!dansFichier(c)) continue;
       const fournisseurId = mapFournisseurs.get(Number(c.fournisseur_id));
       if (!fournisseurId) {
         compte.ignores += 1; // commande sans fournisseur restauré
@@ -488,9 +521,9 @@ function restaurerCompte(idsBoutiques, contenu) {
         numeroLibre('commandes', c.numero),
         fournisseurId,
         statut,
-        Number(c.montant_total) || 0,
+        nombre(c.montant_total),
         c.notes ?? null,
-        utilisateurExiste(c.utilisateur_id) ? Number(c.utilisateur_id) : null,
+        utilisateurValide(c.utilisateur_id),
         c.utilisateur_nom ?? null,
         c.recu_par ?? null,
         c.date_commande ?? null,
@@ -505,22 +538,7 @@ function restaurerCompte(idsBoutiques, contenu) {
       INSERT INTO commande_lignes (commande_id, produit_id, produit_nom, quantite, prix_unitaire, sous_total)
       VALUES (?, ?, ?, ?, ?, ?)
     `);
-    for (const l of commandeLignes) {
-      const commandeId = mapCommandes.get(Number(l.commande_id));
-      const produitId = mapProduits.get(Number(l.produit_id));
-      if (!commandeId || !produitId) {
-        compte.ignores += 1;
-        continue;
-      }
-      insererCommandeLigne.run(
-        commandeId,
-        produitId,
-        String(l.produit_nom || 'Article').slice(0, 120),
-        Number(l.quantite) || 1,
-        Number(l.prix_unitaire) || 0,
-        Number(l.sous_total) || 0
-      );
-    }
+    insererLignes(insererCommandeLigne, commandeLignes, mapCommandes, 'commande_id');
 
     // --- 7. Journal d'audit (traçabilité restaurée avec les données) ---
     const ACTIONS_JOURNAL = ['creation', 'modification', 'suppression', 'entree', 'sortie'];
@@ -531,13 +549,13 @@ function restaurerCompte(idsBoutiques, contenu) {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')), ?, ?)
     `);
     for (const j of journal) {
-      if (!idsFichier.includes(Number(j.boutique_id))) continue;
+      if (!dansFichier(j)) continue;
       insererJournal.run(
         // Un produit restauré garde son lien ; sinon la ligne reste lisible
         mapProduits.get(Number(j.produit_id)) ?? null,
-        String(j.produit_nom || '—').slice(0, 120),
-        utilisateurExiste(j.utilisateur_id) ? Number(j.utilisateur_id) : null,
-        String(j.utilisateur_nom || 'Restauration').slice(0, 80),
+        texteCourt(j.produit_nom, 120, '—'),
+        utilisateurValide(j.utilisateur_id),
+        texteCourt(j.utilisateur_nom, 80, 'Restauration'),
         j.utilisateur_role ?? null,
         ACTIONS_JOURNAL.includes(j.action) ? j.action : 'modification',
         j.champ ?? null,
