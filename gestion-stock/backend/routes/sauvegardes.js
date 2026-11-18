@@ -1,58 +1,60 @@
 // ============================================================
-// ROUTES SAUVEGARDES — Copies de la base (ADMIN)
+// ROUTES SAUVEGARDES — Sauvegardes des boutiques du compte (ADMIN)
 // Préfixe : /api/sauvegardes
-// Sécurité : le nom de fichier est vérifié par une expression
-// régulière → impossible de remonter dans l'arborescence (« ../ »)
+//
+// Chaque compte ne voit et ne télécharge QUE ses propres fichiers,
+// et chaque fichier ne contient que les données des boutiques qui lui
+// sont rattachées : aucun autre magasin n'y figure.
+// Le nom est filtré par une expression régulière (pas de « ../ »).
 // ============================================================
 
 const express = require('express');
 const router = express.Router();
-const path = require('path');
-const fs = require('fs');
-const { creerSauvegarde, lister, DOSSIER } = require('../sauvegarde');
+const { creerSauvegardeCompte, listerCompte, cheminCompte, NOM_COMPTE } = require('../sauvegarde');
+const { porteeBoutique } = require('../auth');
 
-// Noms acceptés : stock-2026-10-25-104532.db uniquement
-const NOM_VALIDE = /^stock-\d{4}-\d{2}-\d{2}-\d{6}\.db$/;
-
-// --- 1. Lister les sauvegardes ---
+// --- 1. Lister les sauvegardes DU COMPTE ---
 // GET /api/sauvegardes
 router.get('/', (req, res) => {
   try {
-    res.json(lister());
+    res.json(listerCompte(req.utilisateur.id));
   } catch (err) {
     res.status(500).json({ erreur: 'Impossible de lister les sauvegardes' });
   }
 });
 
-// --- 2. Créer une sauvegarde immédiatement ---
+// --- 2. Créer une sauvegarde de SES boutiques ---
 // POST /api/sauvegardes
 router.post('/', (req, res) => {
   try {
-    const sauvegarde = creerSauvegarde();
+    const portee = porteeBoutique(req);
+    if (!portee.autorise) {
+      return res.status(403).json({ erreur: 'Aucune boutique rattachée à ce compte' });
+    }
+    const sauvegarde = creerSauvegardeCompte(req.utilisateur.id, portee.ids);
     res.status(201).json(sauvegarde);
   } catch (err) {
     console.error('Sauvegarde manuelle impossible :', err.message);
-    res.status(500).json({ erreur: 'Impossible de créer la sauvegarde' });
+    res.status(err.statut || 500).json({ erreur: 'Impossible de créer la sauvegarde' });
   }
 });
 
-// --- 3. Télécharger une sauvegarde ---
-// GET /api/sauvegardes/stock-2026-10-25-104532.db
+// --- 3. Télécharger une sauvegarde de SON compte ---
+// GET /api/sauvegardes/boutiques-2026-11-18-130000.json
 router.get('/:nom', (req, res) => {
   try {
-    const nom = req.params.nom;
-
-    // Garde-fou anti « path traversal » : aucun autre format n'est accepté
-    if (!NOM_VALIDE.test(nom)) {
+    // Nom hors format → refus explicite (400), jamais de remontée de dossier
+    if (!NOM_COMPTE.test(req.params.nom)) {
       return res.status(400).json({ erreur: 'Nom de sauvegarde invalide' });
     }
 
-    const chemin = path.join(DOSSIER, nom);
-    if (!fs.existsSync(chemin)) {
+    // Le dossier du compte fait partie du chemin : même en connaissant
+    // le nom d'un fichier d'un autre compte, il est introuvable ici.
+    const chemin = cheminCompte(req.utilisateur.id, req.params.nom);
+    if (!chemin) {
       return res.status(404).json({ erreur: 'Sauvegarde introuvable' });
     }
-
-    res.download(chemin, nom); // En-tête attachment → téléchargement
+    res.download(chemin, req.params.nom); // En-tête attachment → téléchargement
   } catch (err) {
     res.status(500).json({ erreur: 'Téléchargement impossible' });
   }

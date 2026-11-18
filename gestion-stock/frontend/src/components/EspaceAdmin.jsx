@@ -352,7 +352,9 @@ function EspaceAdmin({ utilisateurCourant }) {
                     {/* --- Boutique de rattachement --- */}
                     <td>
                       {u.role === 'admin' ? (
-                        <span className="badge-role">🌐 Réseau entier</span>
+                        <span className="badge-role" title="Un administrateur peut gérer plusieurs boutiques">
+                          🌐 Ses boutiques
+                        </span>
                       ) : u.boutique_nom ? (
                         <span title={u.boutique_nom}>
                           📍 {u.boutique_nom} <span className="badge-role">[{u.boutique_code}]</span>
@@ -485,15 +487,16 @@ function EspaceAdmin({ utilisateurCourant }) {
       {/* ================= Sauvegardes de la base ================= */}
       <section className="bloc">
         <div className="entete-section">
-          <h2>💾 Sauvegardes de la base</h2>
+          <h2>💾 Sauvegardes de mes boutiques</h2>
           <button className="btn-principal" onClick={creerCopie}>
             📌 Créer une sauvegarde
           </button>
         </div>
 
         <p className="note-securite">
-          Une copie est créée automatiquement au démarrage du serveur, puis toutes les 24 h.
-          Les 7 plus récentes sont conservées.
+          🔒 Un fichier ne contient que les données de <strong>vos</strong> boutiques (produits,
+          stock, ventes, commandes) au format JSON — aucun autre magasin n’y figure. Les 7
+          sauvegardes les plus récentes sont conservées.
         </p>
 
         {sauvegardes.length === 0 ? (

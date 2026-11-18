@@ -10,7 +10,7 @@ const MARQUE = 'Gestion de stock';
 
 export const METADONNEES = {
   application: {
-    titre: `${MARQUE} et caisse multi-boutiques — Supermarché`,
+    titre: `${MARQUE} et caisse multi-boutiques & Supermarché`,
     description:
       'Gestion de stock pour supermarché : caisse, mouvements, fournisseurs, commandes et statistiques, avec données cloisonnées par boutique et droits par rôle.',
   },

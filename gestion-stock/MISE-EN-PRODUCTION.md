@@ -79,6 +79,16 @@ server {
     root  /var/www/gestion-stock/frontend/dist;
     index index.html;
 
+    # Compression et cache long des fichiers compilés (noms hachés).
+    # index.html reste non mis en cache : il référence les nouveaux noms.
+    gzip on;
+    gzip_types text/css application/javascript image/svg+xml application/xml text/plain;
+
+    location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+
     # proxy_pass sans chemin final : /api/... est transmis tel quel
     location /api/ {
         proxy_pass http://127.0.0.1:5000;
@@ -102,6 +112,8 @@ Certificat : `certbot --nginx -d stock.monmagasin.ci` (renouvellement automatiqu
 stock.monmagasin.ci {
     encode gzip
     root * /var/www/gestion-stock/frontend/dist
+
+    header /assets/* Cache-Control "public, max-age=31536000, immutable"
 
     handle /api/* {
         reverse_proxy 127.0.0.1:5000

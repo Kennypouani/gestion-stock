@@ -97,6 +97,14 @@ function Caisse({ utilisateur }) {
   const total = Math.max(0, sousTotal - remiseNum);
   const monnaie = Math.max(0, (parseFloat(montantVerse) || 0) - total);
 
+  // Le montant versé suit automatiquement le panier (prix enregistrés × quantités,
+  // remise déduite). Il redevient libre dès que le caissier le modifie à la main,
+  // et se recalcule à chaque changement d'article, de quantité ou de remise.
+  useEffect(() => {
+    setMontantVerse(total > 0 ? String(Math.round(total * 100) / 100) : '');
+    // total dépend uniquement de ces deux valeurs
+  }, [sousTotal, remiseNum]);
+
   // --- Encaissement ---
   async function encaisser(e) {
     e.preventDefault();
@@ -259,7 +267,10 @@ function Caisse({ utilisateur }) {
                   placeholder={String(Math.ceil(total))}
                   required
                 />
-                <small>Monnaie à rendre : <strong>{FCFA(monnaie)} FCFA</strong></small>
+                <small>
+                  Calculé automatiquement depuis le panier (modifiable pour un billet) —{' '}
+                  Monnaie à rendre : <strong>{FCFA(monnaie)} FCFA</strong>
+                </small>
               </div>
             )}
 
@@ -289,7 +300,7 @@ function Caisse({ utilisateur }) {
 
             <div className="ticket">
               <p className="ticket-entete">
-                <strong>🛒 Gestion de Stock — Supermarché</strong><br />
+                <strong>🛒 Gestion de Stock & Supermarché</strong><br />
                 Ticket <strong>{ticket.numero}</strong> du{' '}
                 {String(ticket.date_vente).replace(' ', ' à ')}<br />
                 Caissier : {ticket.utilisateur_nom}

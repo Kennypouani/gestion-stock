@@ -7,11 +7,13 @@
 :root {
   --bleu: #2563eb;
   --bleu-fonce: #1e40af;
-  --vert: #16a34a;
+  /* Teintes assombries pour respecter le contraste AA (4,5:1) :
+     le vert et l'orange d'origine tombaient à ~3,3:1 sur blanc. */
+  --vert: #15803d;
   --rouge: #dc2626;
-  --orange: #ea580c;
+  --orange: #c2410c;
   --gris-fonce: #1f2937;
-  --gris: #6b7280;
+  --gris: #4b5563;
   --gris-clair: #f3f4f6;
   --bordure: #e5e7eb;
   --blanc: #ffffff;
@@ -115,8 +117,8 @@ body {
   padding: 3px 8px;
   border-radius: 4px;
 }
-.badge-entree { background: #dcfce7; color: var(--vert); }
-.badge-sortie { background: #fee2e2; color: var(--rouge); }
+.badge-entree { background: #dcfce7; color: #166534; }
+.badge-sortie { background: #fee2e2; color: #b91c1c; }
 
 /* --- Formulaires --- */
 .formulaire {
@@ -245,6 +247,59 @@ body {
 }
 .comptes-test button:hover { background: #dbeafe; border-color: var(--bleu); }
 .astuce { font-size: 0.78rem; color: var(--gris); margin: 4px 0 0; font-style: italic; }
+
+/* Bascule connexion ↔ inscription */
+.bascule-mode {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--bordure);
+  text-align: center;
+  font-size: 0.88rem;
+  color: var(--gris);
+}
+.lien-bascule {
+  display: inline-block;
+  color: var(--bleu);
+  font-weight: 600;
+  font-size: 0.95rem;
+  text-decoration: underline;
+  margin-top: 4px;
+}
+.lien-bascule:hover { color: var(--bleu-fonce); }
+
+/* Bulle d'avertissement : numéro de ticket attribué automatiquement */
+.bulle-numero { max-width: 440px; }
+.texte-bulle {
+  font-size: 0.92rem;
+  line-height: 1.5;
+  margin: 0 0 12px;
+  color: var(--texte);
+}
+.texte-bulle code {
+  background: var(--gris-clair);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 0.88em;
+}
+
+/* Champ verrouillé (profil imposé à l'inscription) */
+.champ-verrouille,
+.champ-verrouille:disabled {
+  background: var(--gris-clair);
+  color: var(--gris);
+  cursor: not-allowed;
+  border-style: dashed;
+}
+.note-inscription {
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--gris);
+  background: var(--gris-clair);
+  border: 1px solid var(--bordure);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin: 0;
+}
 
 /* ============ POLITIQUE DE CONFIDENTIALITÉ ============ */
 
@@ -534,16 +589,16 @@ body {
   font-size: .65rem; font-weight: 700; padding: 2px 7px; border-radius: 10px; margin-left: 6px;
   white-space: nowrap;
 }
-.badge-perime { background: #fee2e2; color: var(--rouge); border: 1px solid var(--rouge); }
-.badge-expiration { background: #ffedd5; color: var(--orange); border: 1px solid var(--orange); }
+.badge-perime { background: #fee2e2; color: #b91c1c; border: 1px solid var(--rouge); }
+.badge-expiration { background: #ffedd5; color: #9a3412; border: 1px solid var(--orange); }
 .date-expiration { background: var(--gris-clair); color: var(--gris); font-weight: 400; }
 
 .statut-en_attente { background: #fef3c7; color: #92400e; padding: 3px 8px; border-radius: 4px; font-size: .85rem; white-space: nowrap; }
 .statut-envoyee { background: #dbeafe; color: var(--bleu-fonce); padding: 3px 8px; border-radius: 4px; font-size: .85rem; white-space: nowrap; }
-.statut-recue { background: #dcfce7; color: var(--vert); padding: 3px 8px; border-radius: 4px; font-size: .85rem; white-space: nowrap; }
+.statut-recue { background: #dcfce7; color: #166534; padding: 3px 8px; border-radius: 4px; font-size: .85rem; white-space: nowrap; }
 .statut-annulee { background: var(--gris-clair); color: var(--gris); padding: 3px 8px; border-radius: 4px; font-size: .85rem; text-decoration: line-through; white-space: nowrap; }
 
-.ligne-archive { opacity: .6; }
+.ligne-archive { opacity: .75; }
 .ligne-archive td { font-style: italic; }
 
 /* ============================================================
@@ -569,4 +624,40 @@ body {
   .caisse-grille { grid-template-columns: 1fr; }
   .panier { position: static; }
   .champ-large { grid-column: span 1; }
+}
+
+/* ============================================================
+   VENTES PAR PÉRIODE ET COURBE D'ÉVOLUTION (tableau de bord)
+   ============================================================ */
+.cartes-periodes { margin-top: 16px; margin-bottom: 8px; }
+.carte-ventes { border-left: 4px solid var(--bleu); }
+.carte-valeur-ventes { font-size: 1.5rem; color: var(--bleu-fonce); white-space: nowrap; }
+
+.etiquette-portee {
+  background: var(--gris-clair);
+  border: 1px solid var(--bordure);
+  color: var(--gris-fonce);
+  font-size: .85rem;
+  font-weight: 600;
+  padding: 5px 10px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+
+.tableau-boutiques { margin-top: 8px; }
+.tableau-boutiques td:not(:first-child), .tableau-boutiques th:not(:first-child) { text-align: right; white-space: nowrap; }
+.tableau-boutiques tfoot td {
+  font-weight: 700;
+  color: var(--bleu-fonce);
+  background: #eff6ff;
+  border-top: 2px solid var(--bordure);
+}
+.code-boutique { color: var(--gris); font-size: .8rem; }
+
+.graphique-ventes { width: 100%; height: auto; display: block; margin-top: 8px; }
+.graphique-axe { font-size: 11px; fill: var(--gris); }
+
+@media (max-width: 600px) {
+  .carte-valeur-ventes { font-size: 1.25rem; }
+  .tableau-boutiques { display: block; overflow-x: auto; }
 }

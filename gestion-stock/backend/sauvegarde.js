@@ -1,8 +1,12 @@
 // ============================================================
-// SAUVEGARDES — Copie cohérente de la base de données
-// Technique : « VACUUM INTO » produit un fichier SQLite propre
-// et complet, même si le serveur est en train d'écrire.
-// On garde les 7 sauvegardes les plus récentes.
+// SAUVEGARDES
+// 1. Copie SERVEUR de toute la base (VACUUM INTO), jamais exposée
+//    par l'API : elle sert à l'exploitant du serveur, pas aux comptes.
+// 2. Sauvegarde PAR COMPTE : un fichier JSON contenant UNIQUEMENT les
+//    données des boutiques rattachées au compte demandeur (produits,
+//    ventes, stock, commandes…). Aucun autre magasin n'y figure, et un
+//    compte ne peut ni lister ni télécharger le fichier d'un autre.
+// On garde les 7 sauvegardes les plus récentes par compte.
 // ============================================================
 
 const fs = require('fs');
@@ -101,4 +105,153 @@ function arreter() {
   if (minuterie) clearInterval(minuterie);
 }
 
-module.exports = { creerSauvegarde, lister, demarrerAutomatique, arreter, DOSSIER };
+// ============================================================
+// SAUVEGARDES PAR COMPTE (limitées à SES boutiques)
+// ============================================================
+
+const NOM_COMPTE = /^boutiques-\d{4}-\d{2}-\d{2}-\d{6}\.json$/;
+
+// Dossier privé du compte : c'est cette séparation qui empêche
+// un administrateur de voir les fichiers d'un autre.
+function dossierCompte(utilisateurId) {
+  const id = parseInt(utilisateurId, 10);
+  if (!Number.isInteger(id) || id <= 0) throw new Error('Compte invalide');
+  return path.join(DOSSIER, `compte-${id}`);
+}
+
+// Toutes les lignes d'une table pour les boutiques autorisées
+function lignesDe(table, ids, colonne = 'boutique_id') {
+  if (ids.length === 0) return [];
+  const marques = ids.map(() => '?').join(', ');
+  return db.prepare(`SELECT * FROM ${table} WHERE ${colonne} IN (${marques})`).all(...ids);
+}
+
+// Lignes filles rattachées à un ensemble d'identifiants parents
+function lignesLiees(table, colonne, ids) {
+  if (ids.length === 0) return [];
+  const marques = ids.map(() => '?').join(', ');
+  return db.prepare(`SELECT * FROM ${table} WHERE ${colonne} IN (${marques})`).all(...ids);
+}
+
+// Contenu complet, mais UNIQUEMENT pour ces boutiques
+function contenuBoutiques(ids) {
+  const boutiques = lignesDe('boutiques', ids, 'id');
+  const produits = lignesDe('produits', ids);
+  const mouvements = lignesDe('mouvements', ids);
+  const ventes = lignesDe('ventes', ids);
+  const commandes = lignesDe('commandes', ids);
+  const journal = lignesDe('journal', ids);
+
+  const venteLignes = lignesLiees('vente_lignes', 'vente_id', ventes.map((v) => v.id));
+  const commandeLignes = lignesLiees(
+    'commande_lignes',
+    'commande_id',
+    commandes.map((c) => c.id)
+  );
+
+  // Comptes rattachés à ces boutiques — SANS le mot de passe (même haché)
+  const utilisateurs = ids.length === 0
+    ? []
+    : db
+        .prepare(`
+          SELECT u.id, u.nom, u.email, u.role, u.boutique_id, u.actif, u.date_creation
+          FROM utilisateurs u
+          WHERE u.id IN (SELECT utilisateur_id FROM acces_boutiques WHERE boutique_id IN (
+            ${ids.map(() => '?').join(', ')}
+          ))
+          ORDER BY u.nom
+        `)
+        .all(...ids);
+
+  return {
+    version: 1,
+    generee_le: new Date().toISOString(),
+    boutiques,
+    produits,
+    mouvements,
+    ventes,
+    vente_lignes: venteLignes,
+    commandes,
+    commande_lignes: commandeLignes,
+    journal,
+    utilisateurs,
+  };
+}
+
+// --- Crée une sauvegarde JSON pour un compte et renvoie sa description ---
+function creerSauvegardeCompte(utilisateurId, idsBoutiques) {
+  const ids = (idsBoutiques || []).map(Number).filter((id) => Number.isInteger(id) && id > 0);
+  if (ids.length === 0) {
+    const err = new Error('Aucune boutique rattachée à ce compte');
+    err.statut = 403;
+    throw err;
+  }
+
+  const dossier = dossierCompte(utilisateurId);
+  fs.mkdirSync(dossier, { recursive: true });
+
+  const horodatage = new Date()
+    .toISOString()
+    .replace('T', '-')
+    .replace(/\..*$/, '')
+    .replace(/:/g, '');
+  const nom = `boutiques-${horodatage}.json`;
+  const chemin = path.join(dossier, nom);
+
+  fs.writeFileSync(chemin, JSON.stringify(contenuBoutiques(ids), null, 2), 'utf8');
+
+  nettoyerCompte(utilisateurId);
+  return renvoyerCompte(utilisateurId, nom);
+}
+
+function renvoyerCompte(utilisateurId, nom) {
+  const chemin = path.join(dossierCompte(utilisateurId), nom);
+  const stats = fs.statSync(chemin);
+  return {
+    nom,
+    taille: stats.size,
+    taille_lisible: formatTaille(stats.size),
+    date: stats.mtime.toISOString().slice(0, 19).replace('T', ' '),
+    perimetre: 'boutiques du compte',
+  };
+}
+
+function listerCompte(utilisateurId) {
+  const dossier = dossierCompte(utilisateurId);
+  if (!fs.existsSync(dossier)) return [];
+  return fs
+    .readdirSync(dossier)
+    .filter((f) => NOM_COMPTE.test(f))
+    .map((nom) => renvoyerCompte(utilisateurId, nom))
+    .sort((a, b) => (a.date < b.date ? 1 : -1));
+}
+
+// Chemin ABSOLU d'un fichier du compte, ou null si le nom est refusé
+function cheminCompte(utilisateurId, nom) {
+  if (!NOM_COMPTE.test(nom)) return null;
+  const chemin = path.join(dossierCompte(utilisateurId), nom);
+  return fs.existsSync(chemin) ? chemin : null;
+}
+
+function nettoyerCompte(utilisateurId) {
+  const anciennes = listerCompte(utilisateurId).slice(GARDEES);
+  for (const sauvegarde of anciennes) {
+    try {
+      fs.unlinkSync(path.join(dossierCompte(utilisateurId), sauvegarde.nom));
+    } catch (err) {
+      console.error('Nettoyage sauvegarde compte impossible :', err.message);
+    }
+  }
+}
+
+module.exports = {
+  creerSauvegarde,
+  lister,
+  demarrerAutomatique,
+  arreter,
+  DOSSIER,
+  creerSauvegardeCompte,
+  listerCompte,
+  cheminCompte,
+  NOM_COMPTE,
+};

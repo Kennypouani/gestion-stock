@@ -5,6 +5,7 @@
 
 import { useState, useEffect } from 'react';
 import { getStats, getProduits } from '../api';
+import VentesEtEvolution from './VentesEtEvolution';
 
 function TableauDeBord() {
   // stats = les chiffres clés, setStats = fonction pour les mettre à jour
@@ -169,6 +170,9 @@ function TableauDeBord() {
           </table>
         )}
       </section>
+
+      {/* --- 💰 Ventes du jour, semaine, mois, année + courbe d'évolution --- */}
+      <VentesEtEvolution />
     </div>
   );
 }

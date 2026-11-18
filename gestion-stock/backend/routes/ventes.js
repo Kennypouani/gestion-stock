@@ -192,20 +192,24 @@ router.get('/', (req, res) => {
     return res.status(403).json({ erreur: 'Aucune boutique rattachée à ce compte' });
   }
 
-  const clauses = [];
-  const params = [];
+  // Base COMMUNE : uniquement les boutiques rattachées au compte.
+  // Aucun rôle ne voit les tickets d'une boutique qui n'est pas la sienne.
+  const clauses = [
+    `v.boutique_id IN (${portee.ids.map(() => '?').join(', ')})`,
+  ];
+  const params = [...portee.ids];
 
-  if (!portee.toutes && req.utilisateur.role === 'gerant') {
-    clauses.push('v.boutique_id = ?');
-    params.push(portee.boutiqueId);
-  } else if (!portee.toutes) {
+  if (req.utilisateur.role === 'employe') {
     clauses.push('v.utilisateur_id = ?');
     params.push(req.utilisateur.id);
   } else if (req.query.boutique_id) {
-    // L'admin peut cibler une boutique précise
+    // L'admin peut cibler UNE de ses boutiques
     const cible = parseInt(req.query.boutique_id, 10);
     if (!Number.isInteger(cible) || cible <= 0) {
       return res.status(400).json({ erreur: 'Identifiant de boutique invalide' });
+    }
+    if (!portee.ids.includes(cible)) {
+      return res.status(403).json({ erreur: 'Cette boutique ne vous est pas rattachée' });
     }
     clauses.push('v.boutique_id = ?');
     params.push(cible);

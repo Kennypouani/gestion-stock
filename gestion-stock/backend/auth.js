@@ -57,56 +57,87 @@ function utilisateurConnecte(requete) {
     role: session.role,
     boutique_id: session.boutique_id ?? null,
     mot_de_passe_a_changer: session.mot_de_passe_a_changer === 1,
+    // Boutiques réellement accessibles (source de vérité : acces_boutiques)
+    boutiques: boutiquesDeUtilisateur(session.utilisateur_id),
   };
+}
+
+// --- Boutiques accessibles à un compte ---
+// Lues EN BASE à chaque requête : retirer une boutique prend effet
+// immédiatement, et rien ne peut être choisi par le client.
+function boutiquesDeUtilisateur(utilisateurId) {
+  return db
+    .prepare(`
+      SELECT b.id, b.nom, b.code, b.actif
+      FROM acces_boutiques a
+      JOIN boutiques b ON b.id = a.boutique_id
+      WHERE a.utilisateur_id = ?
+      ORDER BY b.id
+    `)
+    .all(utilisateurId);
+}
+
+// --- Ids des boutiques autorisées (tableau de nombres) ---
+function idsBoutiques(utilisateur) {
+  if (!utilisateur) return [];
+  const liste = utilisateur.boutiques || boutiquesDeUtilisateur(utilisateur.id);
+  return liste.map((b) => Number(b.id)).filter((id) => Number.isInteger(id) && id > 0);
 }
 
 // ============================================================
 // PORTÉE DES DONNÉES (multi-boutiques)
-// admin     → tout le réseau (boutique_id NULL)
-// gerant    → SA boutique uniquement
-// employe   → SA boutique uniquement (la caisse)
+// Un compte ne voit QUE les boutiques qui lui sont rattachées :
+//   admin   → une ou plusieurs boutiques (jamais tout le réseau)
+//   gerant  → sa boutique   |   employe → sa boutique (la caisse)
+// Un compte sans boutique n'a accès à rien (il doit en créer une).
 // ============================================================
 
 // Portée calculée à partir de la session (jamais depuis le client)
 function porteeBoutique(requete) {
-  const u = requete.utilisateur;
-  if (!u) return { autorise: false, toutes: false, boutiqueId: null };
-  if (u.role === 'admin') {
-    return { autorise: true, toutes: true, boutiqueId: u.boutique_id ?? null };
+  const ids = idsBoutiques(requete.utilisateur);
+  if (ids.length === 0) {
+    return { autorise: false, toutes: false, boutiqueId: null, ids: [] };
   }
-  if (u.boutique_id === null || u.boutique_id === undefined) {
-    return { autorise: false, toutes: false, boutiqueId: null };
-  }
-  return { autorise: true, toutes: false, boutiqueId: u.boutique_id };
+  return {
+    autorise: true,
+    // « toutes » = vue réseau de l'admin, limitée à SES boutiques
+    toutes: requete.utilisateur.role === 'admin',
+    boutiqueId: ids[0],
+    ids,
+  };
 }
 
 // Fragment SQL à ajouter à une requête initialisée avec « WHERE 1=1 »
 // Exemple : const c = clauseBoutique(req); sql += c.sql; params.push(...c.params);
+// Aucune boutique => « AND 0=1 » : jamais de fuite par oubli de filtre.
 function clauseBoutique(requete, colonne = 'boutique_id') {
   const portee = porteeBoutique(requete);
-  if (portee.toutes) return { sql: '', params: [] };
-  return { sql: ` AND ${colonne} = ?`, params: [portee.boutiqueId] };
+  if (!portee.autorise) return { sql: ' AND 0=1', params: [] };
+  const interrogations = portee.ids.map(() => '?').join(', ');
+  return { sql: ` AND ${colonne} IN (${interrogations})`, params: [...portee.ids] };
 }
 
 // true si l'objet (portant boutique_id) appartient à la portée de l'utilisateur
 function dansPortee(requete, objet) {
   const portee = porteeBoutique(requete);
   if (!portee.autorise || !objet) return false;
-  if (portee.toutes) return true;
-  return objet.boutique_id === portee.boutiqueId;
+  return portee.ids.includes(Number(objet.boutique_id));
 }
 
 // Boutique visée lors d'une ÉCRITURE :
 //   gérant / employé → TOUJOURS leur boutique (le champ envoyé est ignoré)
-//   admin             → boutique_id du corps, sinon 1
-// Renvoie null si la portée est invalide ou la boutique inexistante
+//   admin            → la boutique demandée, SI elle lui est rattachée
+//                      (sinon sa première boutique)
+// Renvoie null si la portée est invalide ou la boutique non autorisée
 function boutiqueCible(requete, corps = {}) {
   const portee = porteeBoutique(requete);
   if (!portee.autorise) return null;
   if (!portee.toutes) return portee.boutiqueId;
-  if (corps.boutique_id === undefined || corps.boutique_id === null) return 1;
+  if (corps.boutique_id === undefined || corps.boutique_id === null) {
+    return portee.boutiqueId;
+  }
   const id = parseInt(corps.boutique_id, 10);
-  return Number.isInteger(id) && id > 0 ? id : null;
+  return Number.isInteger(id) && portee.ids.includes(id) ? id : null;
 }
 
 // --- Routes encore accessibles quand un changement de mot de passe est imposé ---
@@ -117,6 +148,17 @@ const ROUTES_AUTORISEES_MDP = [
   '/api/auth/deconnexion',
   '/api/auth/moi',
 ];
+
+// --- Routes encore accessibles quand le compte n'a AUCUNE boutique ---
+// Sinon il serait enfermé : impossible de créer sa boutique, de se
+// déconnecter ou de connaître son état. Tout le reste répond 403.
+const ROUTES_SANS_BOUTIQUE = ['/api/auth', '/api/boutiques'];
+
+function cheminAutoriseSansBoutique(chemin) {
+  return ROUTES_SANS_BOUTIQUE.some(
+    (prefixe) => chemin === prefixe || chemin.startsWith(`${prefixe}/`)
+  );
+}
 
 // --- Middleware 1 : impose d'être connecté (sinon 401) ---
 function verifierConnexion(requete, reponse, suite) {
@@ -132,14 +174,27 @@ function verifierConnexion(requete, reponse, suite) {
   // (démonstration ou imposé par un administrateur) ne peut RIEN faire
   // d'autre que le changer. Le contrôle est côté serveur : masquer l'écran
   // dans l'interface ne suffirait pas.
+  const chemin = requete.originalUrl.split('?')[0];
   if (
     config.securiteStricte &&
     utilisateur.mot_de_passe_a_changer &&
-    !ROUTES_AUTORISEES_MDP.includes(requete.originalUrl.split('?')[0])
+    !ROUTES_AUTORISEES_MDP.includes(chemin)
   ) {
     return reponse.status(403).json({
       erreur: 'Changement de mot de passe requis avant de continuer',
       code: 'CHANGEMENT_MOT_DE_PASSE_REQUIS',
+    });
+  }
+
+  // Un compte sans boutique n'existe que pour en créer une :
+  // tant que c'est le cas, toutes les données métier sont fermées.
+  if (
+    utilisateur.boutiques.length === 0 &&
+    !cheminAutoriseSansBoutique(chemin)
+  ) {
+    return reponse.status(403).json({
+      erreur: 'Créez d’abord votre boutique pour accéder à l’application',
+      code: 'BOUTIQUE_REQUISE',
     });
   }
 
@@ -202,6 +257,8 @@ module.exports = {
   hacherJeton,
   purgerSessionsExpirees,
   utilisateurConnecte,
+  boutiquesDeUtilisateur,
+  idsBoutiques,
   porteeBoutique,
   clauseBoutique,
   dansPortee,

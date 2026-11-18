@@ -8,22 +8,35 @@ const bcrypt = require('bcryptjs');
 const rateLimit = require('express-rate-limit'); // Anti force brute
 const db = require('../database');
 const config = require('../config');
-const { creerSession, supprimerSession, hacherJeton, utilisateurConnecte, verifierConnexion } = require('../auth');
+const {
+  creerSession,
+  supprimerSession,
+  hacherJeton,
+  utilisateurConnecte,
+  verifierConnexion,
+  boutiquesDeUtilisateur,
+} = require('../auth');
 const { estMotDePasseDemo } = require('../motsDePasse');
 
 const router = express.Router();
 
-// --- Le nom + le code de SA boutique, ajoutés aux réponses de session ---
+// --- Boutiques du compte, ajoutées aux réponses de session ---
 // L'en-tête de l'application affiche « GÉRANT · Magasin principal » :
 // on le fournit DÈS la connexion et sur /moi, sans appel supplémentaire.
-// Un admin n'a aucune boutique (boutique_id NULL) → rien n'est ajouté.
-function avecBoutique(utilisateur) {
-  if (utilisateur && utilisateur.boutique_id) {
-    const boutique = db
-      .prepare('SELECT id, nom, code FROM boutiques WHERE id = ?')
-      .get(utilisateur.boutique_id);
-    if (boutique) utilisateur.boutique = boutique;
-  }
+// `boutiques` est la liste complète (un admin peut en avoir plusieurs),
+// `boutique` la première, et `doit_creer_boutique` le drapeau qui
+// déclenche l'écran de création quand la liste est vide.
+function avecBoutiques(utilisateur) {
+  if (!utilisateur) return utilisateur;
+  const liste = utilisateur.boutiques || boutiquesDeUtilisateur(utilisateur.id);
+  utilisateur.boutiques = liste.map((b) => ({
+    id: b.id,
+    nom: b.nom,
+    code: b.code,
+    actif: b.actif,
+  }));
+  utilisateur.boutique = utilisateur.boutiques[0] || null;
+  utilisateur.doit_creer_boutique = utilisateur.boutiques.length === 0;
   return utilisateur;
 }
 
@@ -92,14 +105,26 @@ router.post('/connexion', limiteurConnexion, (req, res) => {
   }
 
   try {
+    // On cherche SANS filtrer sur actif : un compte en attente d'activation
+    // doit pouvoir être distingué d'un mauvais mot de passe (mais seulement
+    // une fois le mot de passe vérifié, jamais avant).
     const utilisateur = db
-      .prepare('SELECT * FROM utilisateurs WHERE email = ? AND actif = 1')
+      .prepare('SELECT * FROM utilisateurs WHERE email = ?')
       .get(email.trim().toLowerCase());
 
     // Message IDENTIQUE que l'email n'existe pas ou que le mot de passe est faux :
     // sinon on révélerait quels comptes existent (énumération d'utilisateurs)
     if (!utilisateur || !bcrypt.compareSync(mot_de_passe, utilisateur.mot_de_passe)) {
       return res.status(401).json({ erreur: 'Email ou mot de passe incorrect' });
+    }
+
+    // Mot de passe CORRECT mais compte non activé (inscription en attente) :
+    // on peut le dire sans risque, l'utilisateur connaît déjà le mot de passe.
+    if (!utilisateur.actif) {
+      return res.status(403).json({
+        erreur:
+          'Votre compte n’est pas encore activé — un administrateur doit l’activer avant la première connexion',
+      });
     }
 
     // Création de la session + envoi du cookie
@@ -109,7 +134,7 @@ router.post('/connexion', limiteurConnexion, (req, res) => {
     // On ne renvoie JAMAIS le mot de passe haché
     res.json(
       avecEtatMotDePasse(
-        avecBoutique({
+        avecBoutiques({
           id: utilisateur.id,
           nom: utilisateur.nom,
           email: utilisateur.email,
@@ -122,6 +147,77 @@ router.post('/connexion', limiteurConnexion, (req, res) => {
   } catch (err) {
     console.error('Erreur connexion :', err.message);
     res.status(500).json({ erreur: 'Erreur interne de connexion' });
+  }
+});
+
+// --- 1 bis. INSCRIPTION PUBLIQUE ---
+// POST /api/auth/inscription
+// { nom, email, mot_de_passe, confirmation }
+//
+// Le profil est VERROUILLÉ sur « admin » : c'est le serveur qui l'impose,
+// jamais le client (aucun rôle n'est lu dans la requête, et un admin
+// n'appartient à aucune boutique).
+//
+// Une inscription ne donne pas d'accès immédiat : le compte est créé
+// inactif et doit être activé (écran « Comptes ») avant la première
+// connexion.
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const limiteurInscription = rateLimit({
+  windowMs: 60 * 60 * 1000, // 5 inscriptions par IP et par heure
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { erreur: 'Trop d’inscriptions depuis cette adresse — réessayez dans une heure' },
+});
+
+router.post('/inscription', limiteurInscription, (req, res) => {
+  const { nom, email, mot_de_passe, confirmation } = req.body || {};
+
+  // --- Validation ---
+  if (!nom || nom.trim().length < 2 || nom.trim().length > 80) {
+    return res.status(400).json({ erreur: 'Le nom doit contenir entre 2 et 80 caractères' });
+  }
+  if (!email || !EMAIL_REGEX.test(email.trim())) {
+    return res.status(400).json({ erreur: 'Adresse email invalide' });
+  }
+  if (!mot_de_passe || String(mot_de_passe).length < 8) {
+    return res.status(400).json({ erreur: 'Le mot de passe doit contenir au moins 8 caractères' });
+  }
+  if (mot_de_passe !== confirmation) {
+    return res.status(400).json({ erreur: 'La confirmation ne correspond pas au mot de passe' });
+  }
+  const refusDemo = refusMotDePasseDemo(mot_de_passe);
+  if (refusDemo) return res.status(400).json({ erreur: refusDemo });
+
+  const emailPropre = email.trim().toLowerCase();
+
+  try {
+    const existe = db
+      .prepare('SELECT id FROM utilisateurs WHERE lower(email) = ?')
+      .get(emailPropre);
+    if (existe) {
+      return res.status(409).json({ erreur: 'Un compte existe déjà avec cet email' });
+    }
+
+    // Profil verrouillé : role = 'admin', et AUCUNE boutique.
+    // Le compte est actif mais ne peut rien faire tant qu'il n'a pas
+    // créé sa propre boutique (verifierConnexion renvoie 403 sinon).
+    const hash = bcrypt.hashSync(mot_de_passe, 10);
+    db.prepare(`
+      INSERT INTO utilisateurs (nom, email, mot_de_passe, role, boutique_id, actif, mot_de_passe_a_changer)
+      VALUES (?, ?, ?, 'admin', NULL, 1, 0)
+    `).run(nom.trim(), emailPropre, hash);
+
+    res.status(201).json({
+      role: 'admin',
+      boutique_a_creer: true,
+      message:
+        'Compte administrateur créé — connectez-vous puis créez votre boutique',
+    });
+  } catch (err) {
+    console.error('Erreur inscription :', err.message);
+    res.status(500).json({ erreur: 'Impossible de créer le compte' });
   }
 });
 
@@ -148,7 +244,7 @@ router.get('/moi', (req, res) => {
 
   // On ajoute le nom + le code de SA boutique : l'en-tête de l'application
   // affiche ainsi « GÉRANT · Magasin principal » sans autre appel API.
-  res.json(avecEtatMotDePasse(avecBoutique(utilisateur)));
+  res.json(avecEtatMotDePasse(avecBoutiques(utilisateur)));
 });
 
 // --- 4. CHANGER SON PROPRE MOT DE PASSE ---

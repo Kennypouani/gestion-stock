@@ -10,6 +10,7 @@ const bcrypt = require('bcryptjs');
 const db = require('../database');
 const config = require('../config');
 const { estMotDePasseDemo } = require('../motsDePasse');
+const { porteeBoutique } = require('../auth');
 
 const router = express.Router();
 
@@ -21,16 +22,35 @@ const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const LONGUEUR_MIN_MDP = 8;
 const ROLES_VALIDES = ['employe', 'gerant', 'admin'];
 
+// --- Un compte cible est-il dans MA portée ? ---
+// Vrai s'il partage au moins une boutique avec moi (jamais le compte
+// d'un autre magasin, même pour le consulter).
+function partageMaBoutique(req, cibleId) {
+  const ids = porteeBoutique(req).ids;
+  if (ids.length === 0) return false;
+  const marques = ids.map(() => '?').join(', ');
+  return Boolean(
+    db
+      .prepare(
+        `SELECT 1 FROM acces_boutiques WHERE utilisateur_id = ? AND boutique_id IN (${marques})`
+      )
+      .get(cibleId, ...ids)
+  );
+}
+
 // --- Rattachement à une boutique ---
-// admin  → JAMAIS de boutique (boutique_id NULL = tout le réseau)
-// gerant / employe → OBLIGATOIREMENT une boutique existante
+// admin  → aucune boutique « principale » (il peut en avoir plusieurs)
+// gerant / employe → OBLIGATOIREMENT une de MES boutiques
 // C'est le serveur qui décide : le client ne peut pas choisir autre chose.
-function resoudreBoutique(role, valeur) {
+function resoudreBoutique(role, valeur, idsAutorises) {
   if (role === 'admin') return { valeur: null };
 
   const id = parseInt(valeur, 10);
   if (!Number.isInteger(id) || id <= 0) {
     return { erreur: 'Ce rôle doit être rattaché à une boutique (boutique_id obligatoire)' };
+  }
+  if (!idsAutorises.includes(id)) {
+    return { erreur: 'Boutique inconnue' };
   }
   const boutique = db.prepare('SELECT id, actif FROM boutiques WHERE id = ?').get(id);
   if (!boutique) return { erreur: 'Boutique inconnue' };
@@ -57,6 +77,18 @@ function sansMotDePasse(utilisateur) {
 // ============================================================
 router.get('/', (req, res) => {
   try {
+    // Seulement les comptes qui partagent une de MES boutiques (+ moi-même).
+    const ids = porteeBoutique(req).ids;
+    if (ids.length === 0) {
+      const moi = db
+        .prepare(`
+          SELECT id, nom, email, role, boutique_id, actif, date_creation, mot_de_passe_a_changer
+          FROM utilisateurs WHERE id = ?
+        `)
+        .get(req.utilisateur.id);
+      return res.json(moi ? [moi] : []);
+    }
+    const marques = ids.map(() => '?').join(', ');
     const liste = db
       .prepare(`
         SELECT u.id, u.nom, u.email, u.role, u.boutique_id, u.actif, u.date_creation,
@@ -64,9 +96,11 @@ router.get('/', (req, res) => {
                b.nom AS boutique_nom, b.code AS boutique_code
         FROM utilisateurs u
         LEFT JOIN boutiques b ON b.id = u.boutique_id
+        WHERE u.id = ?
+           OR u.id IN (SELECT utilisateur_id FROM acces_boutiques WHERE boutique_id IN (${marques}))
         ORDER BY u.nom
       `)
-      .all();
+      .all(req.utilisateur.id, ...ids);
     res.json(liste);
   } catch (err) {
     console.error('Erreur liste utilisateurs :', err.message);
@@ -101,8 +135,9 @@ router.post('/', (req, res) => {
     return res.status(400).json({ erreur: refusDemo });
   }
 
-  // --- Rattachement à la boutique (refusé si invalide) ---
-  const boutique = resoudreBoutique(role, boutique_id);
+  // --- Rattachement à la boutique (refusé si invalide ou pas à moi) ---
+  const mesBoutiques = porteeBoutique(req).ids;
+  const boutique = resoudreBoutique(role, boutique_id, mesBoutiques);
   if (boutique.erreur) return res.status(400).json({ erreur: boutique.erreur });
 
   const emailPropre = email.trim().toLowerCase();
@@ -126,6 +161,18 @@ router.post('/', (req, res) => {
         VALUES (?, ?, ?, ?, ?, 1)
       `)
       .run(nom.trim(), emailPropre, hash, role, boutique.valeur);
+
+    // Le nouveau compte est rattaché aux boutiques de son créateur :
+    // une seule pour un gérant/employé, toutes pour un co-administrateur.
+    const nouveauId = Number(resultat.lastInsertRowid);
+    const lier = db.prepare(
+      'INSERT OR IGNORE INTO acces_boutiques (utilisateur_id, boutique_id) VALUES (?, ?)'
+    );
+    if (role === 'admin') {
+      for (const id of mesBoutiques) lier.run(nouveauId, id);
+    } else {
+      lier.run(nouveauId, boutique.valeur);
+    }
 
     const cree = db
       .prepare(`
@@ -151,7 +198,8 @@ router.put('/:id', (req, res) => {
 
   try {
     const cible = db.prepare('SELECT * FROM utilisateurs WHERE id = ?').get(cibleId);
-    if (!cible) {
+    // Compte d'une autre boutique → inexistence présumée (404)
+    if (!cible || !partageMaBoutique(req, cibleId)) {
       return res.status(404).json({ erreur: 'Compte introuvable' });
     }
 
@@ -169,7 +217,7 @@ router.put('/:id', (req, res) => {
     // --- Rattachement à une boutique (optionnel : sinon on garde l'existant) ---
     const roleFinal = role !== undefined ? role : cible.role;
     if (boutique_id !== undefined) {
-      const boutique = resoudreBoutique(roleFinal, boutique_id);
+      const boutique = resoudreBoutique(roleFinal, boutique_id, porteeBoutique(req).ids);
       if (boutique.erreur) return res.status(400).json({ erreur: boutique.erreur });
       // Un compte modifié ne garde PAS de session éventuellement obsolète
       if (boutique.valeur !== cible.boutique_id) {
@@ -179,9 +227,16 @@ router.put('/:id', (req, res) => {
         boutique.valeur,
         cibleId
       );
+      // Le lien d'accès suit le rattachement : une seule boutique
+      if (boutique.valeur !== null) {
+        db.prepare('DELETE FROM acces_boutiques WHERE utilisateur_id = ?').run(cibleId);
+        db.prepare(
+          'INSERT OR IGNORE INTO acces_boutiques (utilisateur_id, boutique_id) VALUES (?, ?)'
+        ).run(cibleId, boutique.valeur);
+      }
     } else if (roleFinal !== cible.role) {
       // Changement de rôle : le rattachement doit rester cohérent
-      const boutique = resoudreBoutique(roleFinal, cible.boutique_id);
+      const boutique = resoudreBoutique(roleFinal, cible.boutique_id, porteeBoutique(req).ids);
       if (boutique.erreur) return res.status(400).json({ erreur: boutique.erreur });
       // Un admin n'appartient à AUCUNE boutique (boutique_id NULL) :
       // en promouvant un gérant, on détache donc le compte de son ancien magasin
@@ -290,7 +345,7 @@ router.delete('/:id', (req, res) => {
 
   try {
     const cible = db.prepare('SELECT * FROM utilisateurs WHERE id = ?').get(cibleId);
-    if (!cible) {
+    if (!cible || !partageMaBoutique(req, cibleId)) {
       return res.status(404).json({ erreur: 'Compte introuvable' });
     }
 

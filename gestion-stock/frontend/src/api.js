@@ -61,6 +61,13 @@ export const connexion = (email, motDePasse) =>
     body: JSON.stringify({ email, mot_de_passe: motDePasse }),
   });
 
+// Inscription publique : crée un compte en attente d'activation par l'admin
+export const inscription = (donnees) =>
+  requete(`${BASE}/auth/inscription`, {
+    method: 'POST',
+    body: JSON.stringify(donnees),
+  });
+
 export const deconnexion = () =>
   requete(`${BASE}/auth/deconnexion`, { method: 'POST' });
 
@@ -90,8 +97,15 @@ export const reinitialiserMotDePasse = (id, motDePasse) =>
 export const supprimerUtilisateur = (id) =>
   requete(`${BASE}/utilisateurs/${id}`, { method: 'DELETE' });
 
-// --- Boutiques du réseau (admin : toutes / gérant : la sienne) ---
+// --- Boutiques du compte (uniquement celles rattachées à la session) ---
 export const getBoutiques = () => requete(`${BASE}/boutiques`);
+
+// Créer une boutique : elle est rattachée automatiquement au compte
+export const creerBoutique = (donnees) =>
+  requete(`${BASE}/boutiques`, {
+    method: 'POST',
+    body: JSON.stringify(donnees),
+  });
 
 // --- Produits ---
 export const getProduits = (params = {}) => {
@@ -131,6 +145,12 @@ export const creerMouvement = (donnees) =>
 
 // --- Statistiques du tableau de bord ---
 export const getStats = () => requete(`${BASE}/stats`);
+
+// Ventes par période (jour / semaine / mois / année) et évolution dans le temps
+export const getStatsVentes = (params = {}) => {
+  const query = new URLSearchParams(params).toString();
+  return requete(`${BASE}/stats/ventes${query ? '?' + query : ''}`);
+};
 
 // --- Caisse : tickets de caisse ---
 export const creerVente = (donnees) =>

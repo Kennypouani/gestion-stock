@@ -343,10 +343,10 @@ async function creerOuRecupererFournisseur(A) {
 
   const telechargement = await fetch(`${BASE}/sauvegardes/${sauvegarde.corps.nom}`, { headers: A });
   verifie('Téléchargement de la sauvegarde (200)', telechargement.status === 200, `→ ${telechargement.status}`);
-  // Un .db n'a pas de type MIME officiel → octet-stream est normal
+  // La sauvegarde est désormais un JSON limité aux boutiques du compte
   const typeBackup = telechargement.headers.get('content-type') || '';
-  verifie('Fichier binaire téléchargeable',
-    typeBackup.includes('octet-stream') || typeBackup.includes('sqlite'), typeBackup);
+  verifie('Fichier téléchargeable',
+    typeBackup.includes('json') || typeBackup.includes('octet-stream'), typeBackup);
   verifie('Nom du fichier conservé',
     (telechargement.headers.get('content-disposition') || '').includes(sauvegarde.corps.nom));
 

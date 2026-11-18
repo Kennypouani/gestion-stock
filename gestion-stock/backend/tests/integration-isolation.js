@@ -78,7 +78,13 @@ const NOM_PRODUIT_NORD = 'TEST Produit Nord';
     const cree = await requete('/boutiques', {
       method: 'POST',
       headers: A,
-      body: JSON.stringify({ nom: NOM_BOUTIQUE_NORD, code: CODE_NORD, adresse: 'Quartier Nord' }),
+      body: JSON.stringify({
+        nom: NOM_BOUTIQUE_NORD,
+        code: CODE_NORD,
+        ville: 'Abidjan',
+        quartier: 'Quartier Nord',
+        telephone: '+225 01 02 03 04 05',
+      }),
     });
     verifie('Boutique Nord créée (201)', cree.statut === 201, `→ ${cree.statut} ${JSON.stringify(cree.corps)}`);
     nord = cree.corps;

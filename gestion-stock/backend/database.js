@@ -30,7 +30,8 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     nom TEXT NOT NULL,                       -- Ex : 'Magasin central'
     code TEXT UNIQUE NOT NULL,               -- Ex : 'MP' → tickets TK-MP-2026-0001
-    adresse TEXT,
+    ville TEXT,
+    quartier TEXT,
     telephone TEXT,
     actif INTEGER NOT NULL DEFAULT 1,        -- 0 = boutique archivée (jamais supprimée)
     date_creation TEXT DEFAULT (datetime('now'))
@@ -51,6 +52,21 @@ db.exec(`
     actif INTEGER NOT NULL DEFAULT 1,        -- 1 = compte actif, 0 = désactivé
     date_creation TEXT DEFAULT (datetime('now'))
   );
+`);
+
+// Table ACCES_BOUTIQUES — quelles boutiques un compte peut ouvrir.
+//   • Un compte « gérant » ou « employé » : UNE boutique.
+//   • Un compte « admin » : UNE OU PLUSIEURS boutiques (jamais celles
+//     des autres comptes). Un compte tout neuf n'a AUCUNE ligne :
+//     il doit d'abord créer sa boutique.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS acces_boutiques (
+    utilisateur_id INTEGER NOT NULL REFERENCES utilisateurs(id) ON DELETE CASCADE,
+    boutique_id INTEGER NOT NULL REFERENCES boutiques(id) ON DELETE CASCADE,
+    date_creation TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (utilisateur_id, boutique_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_acces_boutique ON acces_boutiques(boutique_id);
 `);
 
 // Table PRODUITS — une FICHE PAR BOUTIQUE (choix d'architecture validé) :
@@ -247,6 +263,30 @@ function ajouterColonneSiAbsente(table, colonne, definition) {
   }
 }
 
+ajouterColonneSiAbsente('boutiques', 'ville', 'TEXT');
+ajouterColonneSiAbsente('boutiques', 'quartier', 'TEXT');
+
+// La colonne « adresse » a été remplacée par ville + quartier :
+// on recopie l'ancienne valeur dans le quartier (si vide), puis on
+// supprime la colonne devenue inutile. Les bases neuves n'en ont plus.
+{
+  const colonnesBoutiques = db.prepare('PRAGMA table_info(boutiques)').all();
+  const aAdresse = colonnesBoutiques.some((c) => c.name === 'adresse');
+  if (aAdresse) {
+    db.prepare(`
+      UPDATE boutiques
+      SET quartier = adresse
+      WHERE (quartier IS NULL OR TRIM(quartier) = '')
+        AND adresse IS NOT NULL AND TRIM(adresse) <> ''
+    `).run();
+    try {
+      db.exec('ALTER TABLE boutiques DROP COLUMN adresse');
+      console.log('🧩 Migration : boutiques.adresse remplacé par ville / quartier');
+    } catch (err) {
+      console.warn('⚠️  Colonne boutiques.adresse conservée :', err.message);
+    }
+  }
+}
 ajouterColonneSiAbsente('journal', 'motif', 'TEXT');
 ajouterColonneSiAbsente('mouvements', 'utilisateur_id', 'INTEGER');
 ajouterColonneSiAbsente('mouvements', 'utilisateur_nom', 'TEXT');
@@ -287,8 +327,8 @@ const bcrypt = require('bcryptjs');
 
 // 1) La boutique de démarrage (son code sert de suffixe aux tickets)
 if (db.prepare('SELECT COUNT(*) AS n FROM boutiques').get().n === 0) {
-  db.prepare('INSERT INTO boutiques (nom, code, adresse, telephone) VALUES (?, ?, ?, ?)')
-    .run('Magasin principal', 'MP', 'Quartier central', '');
+  db.prepare('INSERT INTO boutiques (nom, code, ville, quartier, telephone) VALUES (?, ?, ?, ?, ?)')
+    .run('Magasin principal', 'MP', 'Abidjan', 'Quartier central', '');
   console.log('🏪 Boutique de démarrage créée (code ticket : MP)');
 }
 
@@ -330,6 +370,27 @@ if (db.prepare('SELECT COUNT(*) AS n FROM utilisateurs').get().n === 0) {
     );
     process.exit(1);
   }
+}
+
+// 2 bis) Reprise des rattachements EXISTANTS vers acces_boutiques
+//   • gérant / employé → leur boutique
+//   • admin historique (boutique_id NULL = tout le réseau) → toutes les
+//     boutiques connues à cet instant, pour ne rien lui retirer.
+//   Une seule exécution : les comptes créés ensuite par inscription
+//   n'ont volontairement aucune boutique.
+const marqueurAcces = db.prepare("SELECT valeur FROM meta WHERE cle = 'acces_boutiques_v1'").get();
+if (!marqueurAcces) {
+  db.prepare(`
+    INSERT OR IGNORE INTO acces_boutiques (utilisateur_id, boutique_id)
+    SELECT id, boutique_id FROM utilisateurs WHERE boutique_id IS NOT NULL
+  `).run();
+  db.prepare(`
+    INSERT OR IGNORE INTO acces_boutiques (utilisateur_id, boutique_id)
+    SELECT u.id, b.id FROM utilisateurs u CROSS JOIN boutiques b
+    WHERE u.role = 'admin' AND u.boutique_id IS NULL
+  `).run();
+  db.prepare("INSERT INTO meta (cle, valeur) VALUES ('acces_boutiques_v1', '1')").run();
+  console.log('🔗 Rattachements comptes ↔ boutiques migrés vers acces_boutiques');
 }
 
 // 3) Produits de démonstration (fiche propre à la boutique 1)

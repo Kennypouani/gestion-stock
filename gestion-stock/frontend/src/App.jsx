@@ -12,6 +12,7 @@ import Caisse from './components/Caisse';
 import Fournisseurs from './components/Fournisseurs';
 import EspaceAdmin from './components/EspaceAdmin';
 import ChangerMotDePasse from './components/ChangerMotDePasse';
+import CreationBoutique from './components/CreationBoutique';
 import PolitiqueConfidentialite from './components/PolitiqueConfidentialite';
 import ConditionsGenerales from './components/ConditionsGenerales';
 import { getUtilisateurCourant, deconnexion } from './api';
@@ -180,6 +181,21 @@ function App() {
     );
   }
 
+  // --- Compte sans boutique : accès à la SEULE création de boutique ---
+  // Le serveur ferme aussi toutes les routes métier dans ce cas (403) :
+  // cet écran n'est pas la seule barrière.
+  // (si la liste est absente d'une session déjà chargée, on ne bloque pas :
+  //  le serveur refusera de toute façon les données métier)
+  if (Array.isArray(utilisateur.boutiques) && utilisateur.boutiques.length === 0) {
+    return (
+      <CreationBoutique
+        pleinEcran
+        onCree={rafraichirUtilisateur}
+        onDeconnexion={seDeconnecter}
+      />
+    );
+  }
+
   const estAdmin = utilisateur.role === 'admin';
   const estGerant = utilisateur.role === 'gerant';
   // « gérer » = créer/modifier les produits ET voir les mouvements :
@@ -202,6 +218,7 @@ function App() {
         { id: 'mouvements', libelle: '🔄 Mouvements' },
         { id: 'caisse', libelle: '🧾 Caisse' },
         { id: 'fournisseurs', libelle: '🚚 Fournisseurs' },
+        { id: 'boutiques', libelle: '🏪 Boutiques' },
         { id: 'comptes', libelle: '👥 Comptes' },
       ]
     : estGerant
@@ -226,7 +243,7 @@ function App() {
       {/* --- En-tête avec le titre, l'utilisateur et la navigation --- */}
       <header className="entete">
         <div className="ligne-entete">
-          <h1>🛒 Gestion de Stock — Supermarché</h1>
+          <h1>🛒 Gestion de Stock & Supermarché</h1>
           <div className="bloc-utilisateur">
             <span className="info-utilisateur">
               {ICONE_ROLE} {utilisateur.nom}
@@ -234,8 +251,11 @@ function App() {
                 className={`badge-role ${estAdmin ? 'badge-admin' : estGerant ? 'badge-gerant' : ''}`}
               >
                 {LIBELLE_ROLE}
-                {/* Le gérant et l'employé appartiennent à UN magasin */}
-                {utilisateur.boutique && ` · ${utilisateur.boutique.nom}`}
+                {/* Le gérant et l'employé appartiennent à UN magasin ;
+                    un admin peut en gérer plusieurs */}
+                {(utilisateur.boutiques || []).length > 1
+                  ? ` · ${utilisateur.boutiques.length} boutiques`
+                  : utilisateur.boutique && ` · ${utilisateur.boutique.nom}`}
               </span>
             </span>
             <button className="btn-mot-de-passe" onClick={() => setModaleMotDePasse(true)} title="Changer mon mot de passe">
@@ -269,6 +289,9 @@ function App() {
         {ongletActif === 'caisse' && <Caisse utilisateur={utilisateur} />}
         {ongletActif === 'fournisseurs' && peutGerer && (
           <Fournisseurs estAdmin={estAdmin} />
+        )}
+        {ongletActif === 'boutiques' && estAdmin && (
+          <CreationBoutique onCree={rafraichirUtilisateur} />
         )}
         {ongletActif === 'comptes' && estAdmin && (
           <EspaceAdmin utilisateurCourant={utilisateur} />

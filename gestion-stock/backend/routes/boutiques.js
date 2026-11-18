@@ -7,7 +7,9 @@
 //     ambigu l'historique des tickets déjà émis.
 //   • Une boutique ne se supprime jamais, elle s'ARCHIVE (actif = 0),
 //     comme les fournisseurs — jamais de perte d'historique.
-//   • Un gérant ne voit que SA boutique.
+//   • Un compte ne voit et ne modifie QUE les boutiques qui lui sont
+//     rattachées (acces_boutiques) : jamais celle d'un autre compte.
+//   • Créer une boutique la rattache automatiquement au compte créateur.
 // ============================================================
 
 const express = require('express');
@@ -15,8 +17,33 @@ const router = express.Router();
 const db = require('../database');
 const { exigerRole, porteeBoutique } = require('../auth');
 
+// Rattache une boutique à un compte (idempotent)
+function rattacher(utilisateurId, boutiqueId) {
+  db.prepare(
+    'INSERT OR IGNORE INTO acces_boutiques (utilisateur_id, boutique_id) VALUES (?, ?)'
+  ).run(utilisateurId, boutiqueId);
+}
+
 const CODE_REGEX = /^[A-Za-z0-9]{2,10}$/;
+const TEL_REGEX = /^[0-9+().\s-]{6,30}$/;
 const NETTOYER = (valeur, max) => String(valeur ?? '').trim().slice(0, max);
+
+// --- Code ticket attribué automatiquement ---
+// Utilisé quand l'admin laisse le champ vide. Alphabet sans caractères
+// ambigus (0/O, 1/I) : le code est lu à voix haute et recopié sur le ticket.
+function codeAutomatique() {
+  const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  for (let essai = 0; essai < 50; essai += 1) {
+    let code = '';
+    for (let i = 0; i < 6; i += 1) {
+      code += ALPHABET[Math.floor(Math.random() * ALPHABET.length)];
+    }
+    const pris = db.prepare('SELECT 1 FROM boutiques WHERE code = ?').get(code);
+    if (!pris) return code;
+  }
+  // Repli déterministe : ne doit jamais arriver en pratique
+  return `B${String(Date.now()).slice(-6)}`;
+}
 
 // ============================================================
 // 1. LISTER LES BOUTIQUES
@@ -25,13 +52,12 @@ const NETTOYER = (valeur, max) => String(valeur ?? '').trim().slice(0, max);
 router.get('/', (req, res) => {
   try {
     const portee = porteeBoutique(req);
-    if (!portee.autorise) {
-      return res.status(403).json({ erreur: 'Aucune boutique rattachée à ce compte' });
-    }
-
-    const boutiques = portee.toutes
-      ? db.prepare('SELECT * FROM boutiques ORDER BY nom COLLATE NOCASE').all()
-      : db.prepare('SELECT * FROM boutiques WHERE id = ?').all(portee.boutiqueId);
+    // Compte tout neuf : liste vide (pas une erreur — il doit créer la sienne)
+    if (portee.ids.length === 0) return res.json([]);
+    const marques = portee.ids.map(() => '?').join(', ');
+    const boutiques = db
+      .prepare(`SELECT * FROM boutiques WHERE id IN (${marques}) ORDER BY nom COLLATE NOCASE`)
+      .all(...portee.ids);
 
     res.json(boutiques);
   } catch (err) {
@@ -42,18 +68,32 @@ router.get('/', (req, res) => {
 
 // ============================================================
 // 2. CRÉER UNE BOUTIQUE (ADMIN)
-// POST /api/boutiques  { nom, code, adresse?, telephone? }
+// POST /api/boutiques  { nom, ville, quartier, telephone, code? }
 // ============================================================
 router.post('/', exigerRole('admin'), (req, res) => {
   const nom = NETTOYER(req.body.nom, 80);
-  const code = NETTOYER(req.body.code, 10).toUpperCase();
-  const adresse = NETTOYER(req.body.adresse, 200) || null;
-  const telephone = NETTOYER(req.body.telephone, 30) || null;
+  const ville = NETTOYER(req.body.ville, 80);
+  const quartier = NETTOYER(req.body.quartier, 80);
+  const telephone = NETTOYER(req.body.telephone, 30);
+  // Le code ticket est FACULTATIF : vide → attribué automatiquement
+  const codeSaisi = NETTOYER(req.body.code, 10).toUpperCase();
 
   if (nom.length < 2) {
     return res.status(400).json({ erreur: 'Le nom de la boutique doit contenir au moins 2 caractères' });
   }
-  if (!CODE_REGEX.test(code)) {
+  if (ville.length < 2) {
+    return res.status(400).json({ erreur: 'La ville de la boutique est obligatoire' });
+  }
+  if (quartier.length < 2) {
+    return res.status(400).json({ erreur: 'Le quartier de la boutique est obligatoire' });
+  }
+  if (!TEL_REGEX.test(telephone)) {
+    return res.status(400).json({
+      erreur:
+        'Le numéro de téléphone est obligatoire (chiffres, +, espaces et tirets — 6 caractères minimum)',
+    });
+  }
+  if (codeSaisi && !CODE_REGEX.test(codeSaisi)) {
     return res.status(400).json({
       erreur: 'Le code (suffixe des tickets) doit contenir 2 à 10 lettres ou chiffres, sans accent ni espace',
     });
@@ -65,14 +105,25 @@ router.post('/', exigerRole('admin'), (req, res) => {
       .get(nom);
     if (doublonNom) return res.status(409).json({ erreur: 'Une boutique porte déjà ce nom' });
 
-    const doublonCode = db.prepare('SELECT id FROM boutiques WHERE code = ?').get(code);
-    if (doublonCode) {
-      return res.status(409).json({ erreur: 'Ce code est déjà utilisé par une autre boutique' });
+    if (codeSaisi) {
+      const doublonCode = db.prepare('SELECT id FROM boutiques WHERE code = ?').get(codeSaisi);
+      if (doublonCode) {
+        return res.status(409).json({ erreur: 'Ce code est déjà utilisé par une autre boutique' });
+      }
     }
 
+    // Champ laissé vide → un code est attribué aléatoirement (unique)
+    const code = codeSaisi || codeAutomatique();
+
     const resultat = db
-      .prepare('INSERT INTO boutiques (nom, code, adresse, telephone) VALUES (?, ?, ?, ?)')
-      .run(nom, code, adresse, telephone);
+      .prepare(
+        'INSERT INTO boutiques (nom, code, telephone, ville, quartier) VALUES (?, ?, ?, ?, ?)'
+      )
+      .run(nom, code, telephone, ville, quartier);
+
+    // La boutique appartient à celui qui la crée : c'est ce lien qui
+    // ouvre (et limite) l'accès aux données du magasin.
+    rattacher(req.utilisateur.id, Number(resultat.lastInsertRowid));
 
     const cree = db.prepare('SELECT * FROM boutiques WHERE id = ?').get(resultat.lastInsertRowid);
     res.status(201).json(cree);
@@ -84,14 +135,17 @@ router.post('/', exigerRole('admin'), (req, res) => {
 
 // ============================================================
 // 3. MODIFIER UNE BOUTIQUE (ADMIN) — le code reste immuable
-// PUT /api/boutiques/2  { nom?, adresse?, telephone?, actif? }
+// PUT /api/boutiques/2  { nom?, ville?, quartier?, telephone?, actif? }
 // ============================================================
 router.put('/:id', exigerRole('admin'), (req, res) => {
   const cibleId = parseInt(req.params.id, 10);
 
   try {
     const existant = db.prepare('SELECT * FROM boutiques WHERE id = ?').get(cibleId);
-    if (!existant) return res.status(404).json({ erreur: 'Boutique introuvable' });
+    // Boutique d'un autre compte → inexistence présumée (404)
+    if (!existant || !porteeBoutique(req).ids.includes(cibleId)) {
+      return res.status(404).json({ erreur: 'Boutique introuvable' });
+    }
 
     // --- Le code ne change JAMAIS (traçabilité des tickets émis) ---
     if (req.body.code !== undefined) {
@@ -119,6 +173,29 @@ router.put('/:id', exigerRole('admin'), (req, res) => {
       db.prepare('UPDATE boutiques SET actif = ? WHERE id = ?').run(actif, cibleId);
     }
 
+    // --- Localisation / contact (facultatifs en modification) ---
+    if (req.body.ville !== undefined) {
+      const ville = NETTOYER(req.body.ville, 80);
+      if (ville.length < 2) {
+        return res.status(400).json({ erreur: 'La ville de la boutique est obligatoire' });
+      }
+      db.prepare('UPDATE boutiques SET ville = ? WHERE id = ?').run(ville, cibleId);
+    }
+    if (req.body.quartier !== undefined) {
+      const quartier = NETTOYER(req.body.quartier, 80);
+      if (quartier.length < 2) {
+        return res.status(400).json({ erreur: 'Le quartier de la boutique est obligatoire' });
+      }
+      db.prepare('UPDATE boutiques SET quartier = ? WHERE id = ?').run(quartier, cibleId);
+    }
+    if (req.body.telephone !== undefined) {
+      const telephone = NETTOYER(req.body.telephone, 30);
+      if (!TEL_REGEX.test(telephone)) {
+        return res.status(400).json({ erreur: 'Numéro de téléphone invalide' });
+      }
+      db.prepare('UPDATE boutiques SET telephone = ? WHERE id = ?').run(telephone, cibleId);
+    }
+
     const nom = NETTOYER(req.body.nom, 80);
     if (nom) {
       if (nom.length < 2) {
@@ -131,20 +208,7 @@ router.put('/:id', exigerRole('admin'), (req, res) => {
       db.prepare('UPDATE boutiques SET nom = ? WHERE id = ?').run(nom, cibleId);
     }
 
-    if (req.body.adresse !== undefined) {
-      db.prepare('UPDATE boutiques SET adresse = ? WHERE id = ?').run(
-        NETTOYER(req.body.adresse, 200) || null,
-        cibleId
-      );
-    }
-    if (req.body.telephone !== undefined) {
-      db.prepare('UPDATE boutiques SET telephone = ? WHERE id = ?').run(
-        NETTOYER(req.body.telephone, 30) || null,
-        cibleId
-      );
-    }
-
-    res.json(db.prepare('SELECT * FROM boutiques WHERE id = ?').get(cibleId));
+        res.json(db.prepare('SELECT * FROM boutiques WHERE id = ?').get(cibleId));
   } catch (err) {
     console.error('Erreur modification boutique :', err.message);
     res.status(500).json({ erreur: 'Impossible de modifier la boutique' });
@@ -160,27 +224,53 @@ router.delete('/:id', exigerRole('admin'), (req, res) => {
 
   try {
     const existant = db.prepare('SELECT * FROM boutiques WHERE id = ?').get(cibleId);
-    if (!existant) return res.status(404).json({ erreur: 'Boutique introuvable' });
+    if (!existant || !porteeBoutique(req).ids.includes(cibleId)) {
+      return res.status(404).json({ erreur: 'Boutique introuvable' });
+    }
     if (!existant.actif) {
       return res.json({ message: 'Boutique déjà archivée', archive: true });
     }
 
-    const actives = db.prepare('SELECT COUNT(*) AS n FROM boutiques WHERE actif = 1').get().n;
+    // On ne peut pas archiver sa DERNIÈRE boutique active :
+    // le compte se retrouverait sans aucun accès.
+    const actives = db
+      .prepare(`
+        SELECT COUNT(*) AS n FROM acces_boutiques a
+        JOIN boutiques b ON b.id = a.boutique_id
+        WHERE a.utilisateur_id = ? AND b.actif = 1
+      `)
+      .get(req.utilisateur.id).n;
     if (actives <= 1) {
-      return res.status(409).json({ erreur: 'Impossible : ceci laisserait le réseau sans boutique active' });
+      return res.status(409).json({
+        erreur: 'Impossible : ceci vous laisserait sans aucune boutique active',
+      });
     }
 
     db.prepare('UPDATE boutiques SET actif = 0 WHERE id = ?').run(cibleId);
 
-    // Les comptes rattachés sont désactivés ET déconnectés immédiatement
-    db.prepare('UPDATE utilisateurs SET actif = 0 WHERE boutique_id = ? AND role <> ?').run(
-      cibleId,
-      'admin'
+    // Les comptes rattachés à CETTE SEULE boutique sont désactivés
+    // et déconnectés immédiatement (un admin multi-boutiques garde
+    // l'accès à ses autres magasins).
+    const seuls = db
+      .prepare(`
+        SELECT utilisateur_id FROM acces_boutiques
+        GROUP BY utilisateur_id
+        HAVING COUNT(*) = 1 AND MAX(boutique_id) = ?
+      `)
+      .all(cibleId)
+      .map((l) => l.utilisateur_id);
+
+    const desactiver = db.prepare(
+      "UPDATE utilisateurs SET actif = 0 WHERE id = ? AND role <> 'admin'"
     );
-    db.prepare(`
-      DELETE FROM sessions
-      WHERE utilisateur_id IN (SELECT id FROM utilisateurs WHERE boutique_id = ?)
-    `).run(cibleId);
+    const fermerSessions = db.prepare('DELETE FROM sessions WHERE utilisateur_id = ?');
+    for (const id of seuls) {
+      desactiver.run(id);
+      fermerSessions.run(id);
+    }
+    // Personne ne garde un accès à une boutique archivée du point de vue
+    // des sessions : on retire le rattachement devenu inutile.
+    db.prepare('DELETE FROM acces_boutiques WHERE boutique_id = ?').run(cibleId);
 
     const nbLies = db
       .prepare('SELECT COUNT(*) AS n FROM produits WHERE boutique_id = ?')
