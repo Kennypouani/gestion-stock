@@ -316,6 +316,11 @@ function restaurerCompte(idsBoutiques, contenu) {
   db.exec('BEGIN');
   try {
     // --- 1. On vide les boutiques concernées (remplacement, pas fusion) ---
+    // DEUX PASSES : d'abord TOUTES les lignes dépendantes de toutes les
+    // boutiques du fichier, ensuite les produits et fournisseurs.
+    // Sinon une vieille commande d'une boutique du fichier encore liée à
+    // un produit d'une AUTRE boutique du fichier bloque la suppression
+    // (contrainte de clé étrangère).
     for (const id of idsFichier) {
       db.prepare('DELETE FROM journal WHERE boutique_id = ?').run(id);
       db.prepare('DELETE FROM mouvements WHERE boutique_id = ?').run(id);
@@ -327,6 +332,8 @@ function restaurerCompte(idsBoutiques, contenu) {
         'DELETE FROM commande_lignes WHERE commande_id IN (SELECT id FROM commandes WHERE boutique_id = ?)'
       ).run(id);
       db.prepare('DELETE FROM commandes WHERE boutique_id = ?').run(id);
+    }
+    for (const id of idsFichier) {
       db.prepare('DELETE FROM produits WHERE boutique_id = ?').run(id);
       db.prepare('DELETE FROM fournisseurs WHERE boutique_id = ?').run(id);
     }
