@@ -74,6 +74,13 @@ const comptesDemo = booleen(process.env.COMPTES_DEMO, !estProduction);
 // pour reproduire ce comportement en local.
 const securiteStricte = booleen(process.env.SECURITE_STRICTE, estProduction);
 
+// HTTPS obligatoire : toute requête arrivée en clair est redirigée vers
+// https:// (code 308, méthode et corps conservés) et HSTS est activé.
+// Actif par défaut en production ; à laisser désactivé pour un test HTTP
+// local. Derrière un reverse proxy qui termine le TLS, il faut TRUST_PROXY
+// pour que le serveur sache que la requête d'origine était en HTTPS.
+const forcerHttps = booleen(process.env.FORCER_HTTPS, estProduction);
+
 // Mots de passe des comptes de démonstration (surchargables)
 const mdpDemo = {
   admin: texte(process.env.MDP_DEMO_ADMIN) || 'admin123',
@@ -105,6 +112,12 @@ if (estProduction && !securiteStricte) {
     '⚠️  SECURITE_STRICTE=false en production : les mots de passe de démonstration restent autorisés.'
   );
 }
+if (forcerHttps && trustProxy === false) {
+  console.warn(
+    '⚠️  FORCER_HTTPS actif sans TRUST_PROXY : derrière un reverse proxy qui termine le TLS, ' +
+      'le serveur verra du HTTP et redirigera en boucle. Réglez TRUST_PROXY=1.'
+  );
+}
 
 module.exports = {
   environnement,
@@ -113,6 +126,7 @@ module.exports = {
   originesFrontend,
   trustProxy,
   cookieSecure,
+  forcerHttps,
   securiteStricte,
   comptesDemo,
   mdpDemo,

@@ -14,6 +14,7 @@ import {
   supprimerUtilisateur,
   getSauvegardes,
   creerSauvegarde,
+  BASE_API,
 } from '../api';
 
 // Formulaire de création vide
@@ -517,7 +518,7 @@ function EspaceAdmin({ utilisateurCourant }) {
                     {/* Le cookie de session accompagne la requête */}
                     <a
                       className="valeur-lien"
-                      href={`${import.meta.env.VITE_API_URL || 'http://localhost:5000/api'}/sauvegardes/${s.nom}`}
+                      href={`${BASE_API}/sauvegardes/${s.nom}`}
                     >
                       ⬇️ Télécharger
                     </a>

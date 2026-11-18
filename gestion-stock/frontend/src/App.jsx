@@ -12,12 +12,16 @@ import Caisse from './components/Caisse';
 import Fournisseurs from './components/Fournisseurs';
 import EspaceAdmin from './components/EspaceAdmin';
 import ChangerMotDePasse from './components/ChangerMotDePasse';
+import PolitiqueConfidentialite from './components/PolitiqueConfidentialite';
+import ConditionsGenerales from './components/ConditionsGenerales';
 import { getUtilisateurCourant, deconnexion } from './api';
 import './App.css';
 
 // L'application n'a qu'une seule adresse : les écrans sont des onglets,
-// pas des pages. Tout autre chemin est donc une URL inconnue.
-const CHEMINS_CONNUS = ['/', '/index.html'];
+// pas des pages. Les documents légaux (confidentialité, conditions
+// générales) font exception : ce sont des pages publiques, consultables
+// sans connexion. Tout autre chemin est une URL inconnue.
+const CHEMINS_CONNUS = ['/', '/index.html', '/confidentialite', '/conditions-generales'];
 
 function App() {
   // utilisateur = null (non connecté) ou { nom, email, role }
@@ -25,11 +29,28 @@ function App() {
   const [verification, setVerification] = useState(true); // encore en cours ?
   const [onglet, setOnglet] = useState('tableau-bord');
   const [modaleMotDePasse, setModaleMotDePasse] = useState(false); // changement de mdp
-  // Chemin courant : une seule source de vérité, mise à jour par le bouton
-  // « Revenir à l'application ». Le reste en est déduit.
+  // Chemin courant : une seule source de vérité, mise à jour par la
+  // navigation interne (liens des documents légaux, bouton de retour).
+  // Le reste en est déduit.
   const [chemin, setChemin] = useState(() => window.location.pathname);
   const cheminInconnu = !CHEMINS_CONNUS.includes(chemin);
   const [messageConnexion, setMessageConnexion] = useState(null);
+
+  // --- Navigation interne, sans rechargement ---
+  // L'URL reste partageable et le bouton Retour du navigateur fonctionne
+  function allerA(nouveauChemin) {
+    if (nouveauChemin !== window.location.pathname) {
+      window.history.pushState({}, '', nouveauChemin);
+    }
+    setChemin(nouveauChemin);
+  }
+
+  // Le navigateur revient en arrière : l'état doit suivre l'adresse réelle
+  useEffect(() => {
+    const surRetourNavigateur = () => setChemin(window.location.pathname);
+    window.addEventListener('popstate', surRetourNavigateur);
+    return () => window.removeEventListener('popstate', surRetourNavigateur);
+  }, []);
 
   // Au chargement de la page : on vérifie si un cookie de session existe
   useEffect(() => {
@@ -65,6 +86,25 @@ function App() {
       setUtilisateur(null);
       setOnglet('tableau-bord');
     }
+  }
+
+  // --- Politique de confidentialité : document public ---
+  // Servi AVANT la vérification de session : consultable sans compte.
+  if (chemin === '/confidentialite') {
+    return (
+      <PolitiqueConfidentialite
+        onRetour={() => allerA('/')}
+        onOuvrirConditions={() => allerA('/conditions-generales')}
+      />
+    );
+  }
+  if (chemin === '/conditions-generales') {
+    return (
+      <ConditionsGenerales
+        onRetour={() => allerA('/')}
+        onOuvrirConfidentialite={() => allerA('/confidentialite')}
+      />
+    );
   }
 
   // --- Adresse inconnue → écran dédié, avec retour vers l'application ---
@@ -103,6 +143,8 @@ function App() {
     return (
       <Connexion
         messageInitial={messageConnexion}
+        onOuvrirPolitique={() => allerA('/confidentialite')}
+        onOuvrirConditions={() => allerA('/conditions-generales')}
         onConnecte={(u) => {
           setMessageConnexion(null);
           setUtilisateur(u);
@@ -216,6 +258,26 @@ function App() {
           <EspaceAdmin utilisateurCourant={utilisateur} />
         )}
       </main>
+
+      <footer className="pied-appli">
+        <div className="liens-document">
+          <button
+            type="button"
+            className="lien-politique"
+            onClick={() => allerA('/confidentialite')}
+          >
+            🔒 Politique de confidentialité
+          </button>
+          <span className="separateur">·</span>
+          <button
+            type="button"
+            className="lien-politique"
+            onClick={() => allerA('/conditions-generales')}
+          >
+            📄 Conditions générales
+          </button>
+        </div>
+      </footer>
 
       {/* Modale de changement de mot de passe (tous les rôles) */}
       {modaleMotDePasse && (

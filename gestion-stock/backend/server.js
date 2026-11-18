@@ -36,11 +36,39 @@ if (config.trustProxy !== false) {
   app.set('trust proxy', config.trustProxy);
 }
 
+// --- HTTPS obligatoire ---
+// Un visiteur ne doit jamais pouvoir se connecter en clair : le cookie de
+// session (et le mot de passe envoyé au login) traverseraient le réseau
+// sans chiffrement. On redirige AVANT tout traitement métier.
+// 308 (et non 301/302) conserve la méthode et le corps : un POST de
+// connexion reste un POST après la redirection.
+if (config.forcerHttps) {
+  app.use((requete, reponse, suite) => {
+    // req.secure s'appuie sur la connexion TLS ou, derrière un proxy de
+    // confiance (TRUST_PROXY), sur l'en-tête X-Forwarded-Proto.
+    if (requete.secure) return suite();
+
+    // L'hôte vient du client : on refuse tout ce qui n'est pas un nom ou
+    // un nom:port valide, pour ne pas fabriquer une redirection piégée.
+    const hote = String(requete.get('host') || '').trim();
+    if (!/^[a-z0-9.-]+(:\d+)?$/i.test(hote)) {
+      return reponse.status(400).json({ erreur: 'En-tête Host invalide' });
+    }
+
+    return reponse.redirect(308, `https://${hote.replace(/:80$/, '')}${requete.originalUrl}`);
+  });
+}
+
 // --- Middlewares (fonctions qui tournent avant chaque requête) ---
 // helmet : ajoute les en-têtes de sécurité (X-Frame-Options, anti-sniffing, etc.)
 app.use(helmet({
   // Notre frontend React (localhost:3000) doit pouvoir lire les réponses de l'API
   crossOriginResourcePolicy: { policy: 'cross-origin' },
+  // HSTS : une fois le site vu en HTTPS, le navigateur ne doit plus jamais
+  // le contacter en clair. Envoyé uniquement quand HTTPS est imposé
+  // (les navigateurs ignorent l'en-tête reçu en HTTP, et un poste de
+  // développement en HTTP local ne doit pas être épinglé).
+  hsts: config.forcerHttps ? { maxAge: 60 * 60 * 24 * 365 } : false,
 }));
 app.use(cors({
   // Seule(s) origine(s) déclarée(s) dans ORIGINE_FRONTEND ont le droit d'appeler l'API

@@ -246,6 +246,63 @@ body {
 .comptes-test button:hover { background: #dbeafe; border-color: var(--bleu); }
 .astuce { font-size: 0.78rem; color: var(--gris); margin: 4px 0 0; font-style: italic; }
 
+/* ============ POLITIQUE DE CONFIDENTIALITÉ ============ */
+
+/* Page de document légal (écran entier, lisible sans connexion) */
+.page-document {
+  min-height: 100vh;
+  background: var(--gris-clair);
+  padding: 24px 16px 48px;
+}
+.boite-document {
+  background: var(--blanc);
+  border: 1px solid var(--bordure);
+  border-radius: 14px;
+  padding: 32px;
+  max-width: 820px;
+  margin: 0 auto;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+}
+.boite-document h1 { margin: 0 0 6px; font-size: 1.6rem; }
+.boite-document h2 { font-size: 1.05rem; margin: 22px 0 8px; }
+.boite-document p, .boite-document li { line-height: 1.6; font-size: 0.95rem; }
+.boite-document ul { padding-left: 20px; margin: 6px 0; }
+.boite-document code {
+  background: var(--gris-clair);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 0.9em;
+}
+.date-document { color: var(--gris); font-size: 0.85rem; margin: 0 0 18px; }
+.actions-document {
+  margin-top: 28px;
+  padding-top: 18px;
+  border-top: 1px solid var(--bordure);
+}
+
+/* Liens discrets vers la politique (connexion + pied de page) */
+.pied-connexion { margin-top: 20px; text-align: center; }
+.pied-appli { text-align: center; margin-top: 24px; }
+.liens-document {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.liens-document-gauche { justify-content: flex-start; margin-top: 12px; }
+.separateur { color: var(--gris); font-size: 0.85rem; }
+.lien-politique {
+  background: none;
+  border: none;
+  padding: 4px 6px;
+  color: var(--bleu);
+  font-size: 0.85rem;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.lien-politique:hover { color: var(--bleu-fonce); }
+
 /* Utilisateur connecté dans l'en-tête */
 .ligne-entete {
   display: flex;

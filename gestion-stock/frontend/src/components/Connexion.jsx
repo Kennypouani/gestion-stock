@@ -6,7 +6,7 @@
 import { useState, useEffect } from 'react';
 import { connexion, getConfigPublique } from '../api';
 
-function Connexion({ onConnecte, messageInitial = null }) {
+function Connexion({ onConnecte, messageInitial = null, onOuvrirPolitique, onOuvrirConditions }) {
   const [email, setEmail] = useState('');
   const [motDePasse, setMotDePasse] = useState('');
   // messageInitial : raison affichée d'emblée (ex. session expirée)
@@ -106,6 +106,19 @@ function Connexion({ onConnecte, messageInitial = null }) {
             <p className="astuce">Astuce : cliquez sur un compte, puis « Se connecter ».</p>
           </div>
         )}
+
+        {/* Documents légaux : accessibles avant toute connexion */}
+        <div className="pied-connexion">
+          <div className="liens-document">
+            <button type="button" className="lien-politique" onClick={onOuvrirPolitique}>
+              🔒 Politique de confidentialité
+            </button>
+            <span className="separateur">·</span>
+            <button type="button" className="lien-politique" onClick={onOuvrirConditions}>
+              📄 Conditions générales
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

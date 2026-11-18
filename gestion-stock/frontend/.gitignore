@@ -22,3 +22,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Aucune variable secrète ne doit être versionnée côté frontend.
+# Vite n'expose au navigateur que les variables préfixées VITE_ : elles
+# sont donc PUBLIQUES par construction. Les clés d'API (paiement, e-mail,
+# IA…) restent uniquement dans backend/.env, lu par le serveur.
+.env
+.env.*
+!.env.example

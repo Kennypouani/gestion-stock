@@ -4,8 +4,17 @@
 // il passe toujours par ces fonctions → qui appellent Express
 // ============================================================
 
-// Adresse de notre serveur backend
-const BASE = 'http://localhost:5000/api';
+// Adresse de notre serveur backend.
+// Développement : backend local, en HTTP sur le port 5000.
+// Production : VITE_API_URL (obligatoirement en HTTPS) ou, à défaut,
+// l'API servie sur la même origine (/api) — donc en HTTPS puisque la page
+// l'est. Un appel http:// depuis une page https serait bloqué par le
+// navigateur (contenu mixte) et exposerait le cookie de session.
+const BASE = import.meta.env.VITE_API_URL?.replace(/\/$/, '')
+  || (import.meta.env.DEV ? 'http://localhost:5000/api' : `${window.location.origin}/api`);
+
+// Réutilisée par les liens de téléchargement (sauvegardes)
+export const BASE_API = BASE;
 
 // Un 401 sur une route métier signifie que la session est morte : on prévient
 // l'application (App.jsx écoute et renvoie vers la connexion).
