@@ -196,8 +196,8 @@ db.exec(`
     FOREIGN KEY (produit_id) REFERENCES produits(id)
   );
 
-  -- FOURNISSEURS : répertoire PARTAGÉ par tout le réseau
-  -- (chaque gérant commande au même catalogue de fournisseurs)
+  -- FOURNISSEURS : répertoire PROPRE À CHAQUE BOUTIQUE
+  -- (un compte ne voit et ne modifie que les fournisseurs de ses boutiques)
   CREATE TABLE IF NOT EXISTS fournisseurs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     nom TEXT NOT NULL,
@@ -206,7 +206,8 @@ db.exec(`
     telephone TEXT,
     adresse TEXT,
     actif INTEGER NOT NULL DEFAULT 1,
-    date_creation TEXT DEFAULT (datetime('now'))
+    date_creation TEXT DEFAULT (datetime('now')),
+    boutique_id INTEGER NOT NULL DEFAULT 1 REFERENCES boutiques(id)
   );
 
   -- BONS DE COMMANDE : passés par l'admin OU par le gérant de la boutique
@@ -261,6 +262,13 @@ function ajouterColonneSiAbsente(table, colonne, definition) {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${colonne} ${definition}`);
     console.log(`🧩 Migration : ${table}.${colonne} ajouté`);
   }
+}
+
+// Répertoire fournisseurs rattaché à une boutique (les lignes existantes
+// restent sur la boutique 1, celle qui les utilisait jusqu'ici)
+ajouterColonneSiAbsente('fournisseurs', 'boutique_id', 'INTEGER NOT NULL DEFAULT 1');
+if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_fournisseurs_boutique'").get()) {
+  db.exec('CREATE INDEX idx_fournisseurs_boutique ON fournisseurs(boutique_id)');
 }
 
 ajouterColonneSiAbsente('boutiques', 'ville', 'TEXT');

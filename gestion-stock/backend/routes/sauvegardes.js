@@ -10,8 +10,24 @@
 
 const express = require('express');
 const router = express.Router();
-const { creerSauvegardeCompte, listerCompte, cheminCompte, NOM_COMPTE } = require('../sauvegarde');
+const rateLimit = require('express-rate-limit');
+const {
+  creerSauvegardeCompte,
+  listerCompte,
+  cheminCompte,
+  restaurerCompte,
+  NOM_COMPTE,
+} = require('../sauvegarde');
 const { porteeBoutique } = require('../auth');
+
+// Une restauration remplace des données : 5 tentatives par quart d'heure
+const limiteurRestauration = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { erreur: 'Trop de restaurations — réessayez dans 15 minutes' },
+});
 
 // --- 1. Lister les sauvegardes DU COMPTE ---
 // GET /api/sauvegardes
@@ -36,6 +52,31 @@ router.post('/', (req, res) => {
   } catch (err) {
     console.error('Sauvegarde manuelle impossible :', err.message);
     res.status(err.statut || 500).json({ erreur: 'Impossible de créer la sauvegarde' });
+  }
+});
+
+// --- 2 bis. Restaurer une sauvegarde JSON dans SES boutiques ---
+// POST /api/sauvegardes/restaurer  { contenu: {...} }
+// Le fichier doit avoir été produit par l'application et ne peut
+// contenir que des boutiques rattachées au compte (sinon 403, sans
+// aucune écriture). Les données actuelles de ces boutiques sont
+// REMPLACÉES par celles du fichier.
+router.post('/restaurer', limiteurRestauration, (req, res) => {
+  const portee = porteeBoutique(req);
+  if (!portee.autorise) {
+    return res.status(403).json({ erreur: 'Aucune boutique rattachée à ce compte' });
+  }
+
+  try {
+    const compte = restaurerCompte(portee.ids, req.body?.contenu);
+    res.json({
+      message: 'Sauvegarde restaurée',
+      ...compte,
+    });
+  } catch (err) {
+    if (err.statut) return res.status(err.statut).json({ erreur: err.message });
+    console.error('Restauration impossible :', err.message);
+    res.status(500).json({ erreur: 'Impossible de restaurer cette sauvegarde' });
   }
 });
 

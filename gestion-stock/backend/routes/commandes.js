@@ -129,7 +129,10 @@ router.post('/', (req, res) => {
     const fournisseur = db
       .prepare('SELECT * FROM fournisseurs WHERE id = ?')
       .get(parseInt(fournisseur_id, 10));
-    if (!fournisseur) throw new ErreurHttp(404, 'Fournisseur introuvable');
+    // Fournisseur d'une autre boutique → introuvable pour ce compte
+    if (!fournisseur || !dansPortee(req, fournisseur)) {
+      throw new ErreurHttp(404, 'Fournisseur introuvable');
+    }
     if (!fournisseur.actif) {
       throw new ErreurHttp(409, 'Ce fournisseur est archivé — réactivez-le avant de commander');
     }
@@ -177,6 +180,14 @@ router.post('/', (req, res) => {
         .prepare('SELECT id FROM boutiques WHERE id = ? AND actif = 1')
         .get(boutiqueId);
       if (!boutiqueExistante) throw new ErreurHttp(400, 'Boutique inconnue ou archivée');
+
+      // Le fournisseur et la commande doivent concerner LA MÊME boutique
+      if (Number(fournisseur.boutique_id) !== boutiqueId) {
+        throw new ErreurHttp(
+          400,
+          'Ce fournisseur appartient à une autre boutique — choisissez-en un de cette boutique'
+        );
+      }
 
       const insertion = db.prepare(`
         INSERT INTO commandes (numero, fournisseur_id, statut, montant_total, notes,

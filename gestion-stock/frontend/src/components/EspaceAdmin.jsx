@@ -14,6 +14,7 @@ import {
   supprimerUtilisateur,
   getSauvegardes,
   creerSauvegarde,
+  restaurerSauvegarde,
   BASE_API,
 } from '../api';
 
@@ -41,6 +42,8 @@ function EspaceAdmin({ utilisateurCourant }) {
   const [boutiques, setBoutiques] = useState([]);
   // Panneau de rattachement ouvert : { id, nom, boutique_id, rolePrevue? }
   const [rattachement, setRattachement] = useState(null);
+  // Restauration d'une sauvegarde en cours
+  const [restauration, setRestauration] = useState(false);
 
   // Seules les boutiques NON archivées peuvent accueillir un compte
   const boutiquesActives = boutiques.filter((b) => Number(b.actif) === 1);
@@ -82,6 +85,45 @@ function EspaceAdmin({ utilisateurCourant }) {
       setSauvegardes(await getSauvegardes());
     } catch (err) {
       afficher('erreur', `❌ ${err.message}`);
+    }
+  }
+
+  // --- Restauration d'un fichier de sauvegarde JSON ---
+  // Le serveur remplace les données des boutiques du compte par celles
+  // du fichier ; il refuse un fichier contenant une boutique étrangère.
+  async function restaurerFichier(e) {
+    const fichier = e.target.files?.[0];
+    e.target.value = ''; // permet de rechoisir le même fichier
+    if (!fichier) return;
+
+    const confirme = window.confirm(
+      `Restaurer « ${fichier.name} » ?\n\n` +
+        'Les données actuelles de vos boutiques (produits, stock, ventes, ' +
+        'commandes, fournisseurs) seront REMPLACÉES par celles du fichier.'
+    );
+    if (!confirme) return;
+
+    setRestauration(true);
+    try {
+      const texte = await fichier.text();
+      let contenu;
+      try {
+        contenu = JSON.parse(texte);
+      } catch {
+        throw new Error('Ce fichier n’est pas un JSON valide');
+      }
+      const r = await restaurerSauvegarde(contenu);
+      afficher(
+        'succes',
+        `♻️ Restauration terminée — ${r.produits} produit(s), ${r.ventes} vente(s), ` +
+          `${r.mouvements} mouvement(s), ${r.commandes} commande(s), ` +
+          `${r.fournisseurs} fournisseur(s), ${r.journal} entrée(s) de journal` +
+          (r.ignores > 0 ? `, ${r.ignores} ligne(s) ignorée(s)` : '')
+      );
+    } catch (err) {
+      afficher('erreur', `❌ ${err.message}`);
+    } finally {
+      setRestauration(false);
     }
   }
 
@@ -498,6 +540,24 @@ function EspaceAdmin({ utilisateurCourant }) {
           stock, ventes, commandes) au format JSON — aucun autre magasin n’y figure. Les 7
           sauvegardes les plus récentes sont conservées.
         </p>
+
+        {/* --- Restauration d'un fichier téléchargé --- */}
+        <div className="restauration-sauvegarde">
+          <label className={`btn-secondaire bouton-fichier ${restauration ? 'desactive' : ''}`}>
+            {restauration ? '♻️ Restauration…' : '⬆️ Restaurer une sauvegarde…'}
+            <input
+              type="file"
+              accept=".json,application/json"
+              onChange={restaurerFichier}
+              disabled={restauration}
+              hidden
+            />
+          </label>
+          <small>
+            Le fichier remplace les données actuelles de vos boutiques. Un fichier contenant une
+            boutique d’un autre compte est refusé.
+          </small>
+        </div>
 
         {sauvegardes.length === 0 ? (
           <p className="vide">Aucune sauvegarde pour l'instant.</p>

@@ -151,11 +151,15 @@ const NOM_PRODUIT_NORD = 'TEST Produit Nord';
 
   // --- Fournisseur partagé (pour la commande de test) ---
   let fournisseurs = (await requete('/fournisseurs', { headers: A })).corps || [];
-  let fournisseur = fournisseurs.find((f) => f.nom.toLowerCase() === 'laiterie du nord');
+  // Le répertoire fournisseurs est propre à chaque boutique : on prend
+  // celui de la boutique Nord (et non celui de la boutique principale)
+  let fournisseur = fournisseurs.find(
+    (f) => f.nom.toLowerCase() === 'laiterie du nord' && f.boutique_id === nord.id
+  );
   if (!fournisseur) {
     const cree = await requete('/fournisseurs', {
       method: 'POST', headers: A,
-      body: JSON.stringify({ nom: 'Laiterie du Nord' }),
+      body: JSON.stringify({ nom: 'Laiterie du Nord', boutique_id: nord.id }),
     });
     fournisseur = cree.corps;
   }

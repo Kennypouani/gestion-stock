@@ -75,7 +75,8 @@ app.use(cors({
   origin: config.originesFrontend,
   credentials: true,                  // Autorise l'envoi du cookie de session
 }));
-app.use(express.json());     // Comprend le format JSON envoyé par le frontend
+// 5 Mo : une sauvegarde JSON complète peut être volumineuse
+app.use(express.json({ limit: '5mb' })); // Comprend le format JSON envoyé par le frontend
 
 // --- Routes publiques (sans connexion) ---
 app.use('/api/auth', authRoutes);             // POST /api/auth/connexion, etc.

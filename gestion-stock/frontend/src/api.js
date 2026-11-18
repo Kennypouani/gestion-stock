@@ -210,6 +210,13 @@ export const getSauvegardes = () => requete(`${BASE}/sauvegardes`);
 export const creerSauvegarde = () =>
   requete(`${BASE}/sauvegardes`, { method: 'POST' });
 
+// Restauration d'une sauvegarde JSON dans les boutiques du compte
+export const restaurerSauvegarde = (contenu) =>
+  requete(`${BASE}/sauvegardes/restaurer`, {
+    method: 'POST',
+    body: JSON.stringify({ contenu }),
+  });
+
 // --- Changement de son propre mot de passe ---
 export const changerMotDePasse = (donnees) =>
   requete(`${BASE}/auth/mot-de-passe`, {

@@ -267,6 +267,28 @@ body {
 }
 .lien-bascule:hover { color: var(--bleu-fonce); }
 
+/* Restauration d'une sauvegarde (onglet Comptes) */
+.restauration-sauvegarde {
+  margin: 6px 0 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+.restauration-sauvegarde small { color: var(--gris); font-size: 0.82rem; }
+.bouton-fichier {
+  display: inline-block;
+  cursor: pointer;
+  padding: 9px 14px;
+  border: 1px solid var(--bordure);
+  border-radius: 6px;
+  background: var(--gris-clair);
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.bouton-fichier:hover { background: #dbeafe; border-color: var(--bleu); }
+.bouton-fichier.desactive { opacity: 0.6; cursor: not-allowed; }
+
 /* Bulle d'avertissement : numéro de ticket attribué automatiquement */
 .bulle-numero { max-width: 440px; }
 .texte-bulle {
