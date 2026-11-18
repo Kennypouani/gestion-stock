@@ -15,6 +15,7 @@ import ChangerMotDePasse from './components/ChangerMotDePasse';
 import PolitiqueConfidentialite from './components/PolitiqueConfidentialite';
 import ConditionsGenerales from './components/ConditionsGenerales';
 import { getUtilisateurCourant, deconnexion } from './api';
+import { METADONNEES, appliquerMetadonnees } from './metadonnees';
 import './App.css';
 
 // L'application n'a qu'une seule adresse : les écrans sont des onglets,
@@ -51,6 +52,21 @@ function App() {
     window.addEventListener('popstate', surRetourNavigateur);
     return () => window.removeEventListener('popstate', surRetourNavigateur);
   }, []);
+
+  // Titre de l'onglet et description : ils suivent l'écran affiché
+  useEffect(() => {
+    const metadonnees =
+      chemin === '/confidentialite'
+        ? METADONNEES.confidentialite
+        : chemin === '/conditions-generales'
+          ? METADONNEES.conditions
+          : cheminInconnu
+            ? METADONNEES.introuvable
+            : utilisateur
+              ? METADONNEES.application
+              : METADONNEES.connexion;
+    appliquerMetadonnees(metadonnees);
+  }, [chemin, cheminInconnu, utilisateur]);
 
   // Au chargement de la page : on vérifie si un cookie de session existe
   useEffect(() => {

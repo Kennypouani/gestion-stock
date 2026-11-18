@@ -135,7 +135,28 @@ Une fois en ligne, contrôler :
 - `GET /api/route-inconnue` renvoie un 404 JSON ;
 - une requête `POST /api/auth/connexion` en clair est redirigée sans créer de session.
 
-## 6. Données et sauvegardes
+## 6. Référencement
+
+`robots.txt` et `sitemap.xml` sont **générés au build** à partir d'une seule valeur :
+`SITE_URL` dans `frontend/.env` (modèle : `frontend/.env.example`). C'est le seul endroit
+où changer de domaine — inutile de modifier les fichiers SEO à la main.
+
+```bash
+cd frontend
+cp .env.example .env      # puis SITE_URL=https://votre-domaine
+npm run build             # → dist/robots.txt + dist/sitemap.xml
+```
+
+Sans `SITE_URL`, le build utilise `https://stock.monmagasin.ci` et affiche un
+avertissement. Le sitemap liste uniquement les trois pages publiques ; `robots.txt`
+exclut `/api/`. En développement, Vite sert ces deux fichiers avec la même valeur.
+
+Avec Nginx, `try_files $uri /index.html` sert ces deux fichiers depuis le disque :
+`/robots.txt` et `/sitemap.xml` ne doivent pas être renvoyés vers l'application. Après la
+mise en ligne, vérifiez `https://votre-domaine/robots.txt` et déclarez le sitemap dans la
+console de recherche (Google Search Console, Bing Webmaster Tools).
+
+## 7. Données et sauvegardes
 
 `backend/stock.db` et `backend/sauvegardes/` ne sont pas versionnés. Prévoyez une copie de
 ces fichiers hors du serveur, des droits restreints (`backend/.env` en `600`) et la
