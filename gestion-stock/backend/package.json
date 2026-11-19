@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test:securite": "node tests/integration-securite.js"
+    "test:securite": "node tests/integration-securite.js",
+    "test:migration": "node tests/integration-migration-commandes.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

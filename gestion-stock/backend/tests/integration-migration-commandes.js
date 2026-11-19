@@ -20,7 +20,7 @@
 // Aucun serveur nécessaire : bases SQLite en mémoire (:memory:), donc
 // la base réelle (stock.db) n'est jamais lue ni modifiée.
 //
-// Lancement :  node tests/integration-migration-commandes.js
+// Lancement :  npm run test:migration
 // Sortie :     code 0 si tout passe, code 1 sinon
 // ============================================================
 
@@ -87,14 +87,16 @@ const ajouterCommande = (db, { numero, fournisseurId, boutiqueId, statut = 'recu
     VALUES (?, ?, ?, ?, ?)
   `).run(numero, fournisseurId, statut, montant, boutiqueId).lastInsertRowid;
 
-const commande = (db, id) => db.prepare('SELECT * FROM commandes WHERE id = ?').get(id);
-const fournisseur = (db, id) => db.prepare('SELECT * FROM fournisseurs WHERE id = ?').get(id);
+const lireCommande = (db, id) => db.prepare('SELECT * FROM commandes WHERE id = ?').get(id);
+const lireFournisseur = (db, id) => db.prepare('SELECT * FROM fournisseurs WHERE id = ?').get(id);
 const nbFournisseurs = (db) => db.prepare('SELECT COUNT(*) AS n FROM fournisseurs').get().n;
 const nbMalRattachees = (db) => db.prepare(`
   SELECT COUNT(*) AS n FROM commandes c
   JOIN fournisseurs f ON f.id = c.fournisseur_id
   WHERE f.boutique_id <> c.boutique_id
 `).get().n;
+const premiereCopie = (db, boutiqueId) =>
+  db.prepare('SELECT * FROM fournisseurs WHERE boutique_id = ?').get(boutiqueId);
 
 // ============================================================
 console.log('\n===== 1. HOMONYME DANS LA BONNE BOUTIQUE =====');
@@ -107,25 +109,23 @@ console.log('\n===== 1. HOMONYME DANS LA BONNE BOUTIQUE =====');
   const source = ajouterFournisseur(db, { nom: 'Laiterie du Nord', boutiqueId: mp, actif: 0 });
   // Homonyme archivé PUIS homonyme actif dans NORD : l'actif doit gagner
   ajouterFournisseur(db, { nom: 'Laiterie du Nord', boutiqueId: nord, actif: 0 });
-  const homonymeActif = ajouterFournisseur(db, { nom: 'Laiterie du Nord', boutiqueId: nord, actif: 1 });
+  const homonymeActif = ajouterFournisseur(db, { nom: 'Laiterie du Nord', boutiqueId: nord });
 
-  const avant = ajouterCommande(db, {
-    numero: 'CMD-2026-0021', fournisseurId: source, boutiqueId: nord, statut: 'recue', montant: 2,
+  const id = ajouterCommande(db, {
+    numero: 'CMD-2026-0021', fournisseurId: source, boutiqueId: nord, montant: 2,
   });
-
   const bilan = reparerFournisseursCommandes(db);
+  const apres = lireCommande(db, id);
 
   verifie('1 commande corrigée', bilan.corrigees === 1, `→ ${bilan.corrigees}`);
   verifie('aucun fournisseur créé (homonyme réutilisé)', bilan.creees === 0, `→ ${bilan.creees}`);
-  verifie('commande rattachée à l’homonyme actif', commande(db, avant).fournisseur_id === homonymeActif,
-    `→ ${commande(db, avant).fournisseur_id} (attendu ${homonymeActif})`);
+  verifie('commande rattachée à l’homonyme actif', apres.fournisseur_id === homonymeActif,
+    `→ ${apres.fournisseur_id} (attendu ${homonymeActif})`);
   verifie('répertoire inchangé (3 fournisseurs)', nbFournisseurs(db) === 3, `→ ${nbFournisseurs(db)}`);
   verifie('plus aucune commande hors boutique', nbMalRattachees(db) === 0);
   verifie('numéro / statut / montant conservés',
-    commande(db, avant).numero === 'CMD-2026-0021' &&
-    commande(db, avant).statut === 'recue' &&
-    commande(db, avant).montant_total === 2,
-    JSON.stringify(commande(db, avant)));
+    apres.numero === 'CMD-2026-0021' && apres.statut === 'recue' && apres.montant_total === 2,
+    JSON.stringify(apres));
   db.close();
 }
 
@@ -138,19 +138,20 @@ console.log('\n===== 2. AUCUN HOMONYME : FOURNISSEUR DE LA BOUTIQUE =====');
 
   const source = ajouterFournisseur(db, { nom: 'Grossiste Sud', boutiqueId: mp });
   const local = ajouterFournisseur(db, { nom: 'Fournisseur local', boutiqueId: nord });
-  const avant = ajouterCommande(db, {
+  const id = ajouterCommande(db, {
     numero: 'CMD-2026-0030', fournisseurId: source, boutiqueId: nord, statut: 'en_attente',
   });
-
   const bilan = reparerFournisseursCommandes(db);
+  const apres = lireCommande(db, id);
 
   verifie('1 commande corrigée', bilan.corrigees === 1, `→ ${bilan.corrigees}`);
   verifie('aucun fournisseur créé', bilan.creees === 0, `→ ${bilan.creees}`);
-  verifie('commande rattachée au fournisseur de sa boutique', commande(db, avant).fournisseur_id === local,
-    `→ ${commande(db, avant).fournisseur_id} (attendu ${local})`);
+  verifie('commande rattachée au fournisseur de sa boutique', apres.fournisseur_id === local,
+    `→ ${apres.fournisseur_id} (attendu ${local})`);
+  verifie('statut conservé', apres.statut === 'en_attente');
   verifie('fournisseur d’origine inchangé',
-    fournisseur(db, source).nom === 'Grossiste Sud' && fournisseur(db, source).boutique_id === mp);
-  verifie('statut conservé', commande(db, avant).statut === 'en_attente');
+    lireFournisseur(db, source).nom === 'Grossiste Sud' &&
+    lireFournisseur(db, source).boutique_id === mp);
   db.close();
 }
 
@@ -165,25 +166,25 @@ console.log('\n===== 3. BOUTIQUE SANS FOURNISSEUR : COPIE CRÉÉE =====');
     nom: 'Laiterie du Nord', boutiqueId: mp, actif: 0,
     contact: 'Ali Traoré', email: 'ali@laiterie.fr', telephone: '+225 07 00 00 00', adresse: 'Zone 4',
   });
-  const avant = ajouterCommande(db, {
-    numero: 'CMD-2026-0023', fournisseurId: source, boutiqueId: m1, statut: 'recue', montant: 2,
+  const id = ajouterCommande(db, {
+    numero: 'CMD-2026-0023', fournisseurId: source, boutiqueId: m1, montant: 2,
   });
-
   const bilan = reparerFournisseursCommandes(db);
+  const copie = premiereCopie(db, m1);
+  const apres = lireCommande(db, id);
 
-  const copie = db.prepare('SELECT * FROM fournisseurs WHERE boutique_id = ?').get(m1);
   verifie('1 commande corrigée', bilan.corrigees === 1, `→ ${bilan.corrigees}`);
   verifie('1 fournisseur créé', bilan.creees === 1, `→ ${bilan.creees}`);
-  verifie('copie bien dans la boutique de la commande', copie && copie.boutique_id === m1);
-  verifie('copie active', copie && copie.actif === 1);
-  verifie('nom repris à l’identique', copie && copie.nom === 'Laiterie du Nord');
-  verifie('coordonnées reprises',
-    copie && copie.contact_nom === 'Ali Traoré' && copie.email === 'ali@laiterie.fr' &&
-    copie.telephone === '+225 07 00 00 00' && copie.adresse === 'Zone 4',
+  verifie('commande rattachée à la copie', Boolean(copie) && apres.fournisseur_id === copie.id);
+  verifie('copie dans la boutique de la commande', Boolean(copie) && copie.boutique_id === m1);
+  verifie('copie active', Boolean(copie) && copie.actif === 1);
+  verifie('nom et coordonnées repris',
+    Boolean(copie) && copie.nom === 'Laiterie du Nord' && copie.contact_nom === 'Ali Traoré' &&
+    copie.email === 'ali@laiterie.fr' && copie.telephone === '+225 07 00 00 00' &&
+    copie.adresse === 'Zone 4',
     copie ? JSON.stringify(copie) : 'aucune copie');
-  verifie('commande rattachée à la copie', commande(db, avant).fournisseur_id === (copie && copie.id));
   verifie('fournisseur d’origine conservé en boutique 1',
-    fournisseur(db, source).boutique_id === mp && fournisseur(db, source).actif === 0);
+    lireFournisseur(db, source).boutique_id === mp && lireFournisseur(db, source).actif === 0);
   db.close();
 }
 
@@ -194,10 +195,11 @@ console.log('\n===== 4. REJOUABLE : 2e EXÉCUTION SANS EFFET =====');
   const mp = ajouterBoutique(db, 'Magasin principal', 'MP');
   const m1 = ajouterBoutique(db, 'M1', 'RZ9W7S');
   const source = ajouterFournisseur(db, { nom: 'Grossiste Sud', boutiqueId: mp });
-  const avant = ajouterCommande(db, { numero: 'CMD-2026-0040', fournisseurId: source, boutiqueId: m1 });
+  const id = ajouterCommande(db, { numero: 'CMD-2026-0040', fournisseurId: source, boutiqueId: m1 });
 
   const premier = reparerFournisseursCommandes(db);
   const deuxieme = reparerFournisseursCommandes(db);
+  const copie = premiereCopie(db, m1);
 
   verifie('1re exécution corrige 1 commande', premier.corrigees === 1, `→ ${premier.corrigees}`);
   verifie('2e exécution : aucune correction', deuxieme.corrigees === 0, `→ ${deuxieme.corrigees}`);
@@ -205,7 +207,7 @@ console.log('\n===== 4. REJOUABLE : 2e EXÉCUTION SANS EFFET =====');
   verifie('un seul fournisseur dans M1 (pas de doublon)',
     db.prepare('SELECT COUNT(*) AS n FROM fournisseurs WHERE boutique_id = ?').get(m1).n === 1);
   verifie('rattachement stable', nbMalRattachees(db) === 0 &&
-    commande(db, avant).fournisseur_id === db.prepare('SELECT id FROM fournisseurs WHERE boutique_id = ?').get(m1).id);
+    lireCommande(db, id).fournisseur_id === copie.id);
   db.close();
 }
 
@@ -225,8 +227,9 @@ console.log('\n===== 5. COMMANDES DÉJÀ CORRECTES INTACTES =====');
 
   verifie('aucune correction', bilan.corrigees === 0, `→ ${bilan.corrigees}`);
   verifie('aucune création', bilan.creees === 0, `→ ${bilan.creees}`);
-  verifie('commande MP inchangée', commande(db, cMp).fournisseur_id === fMp && commande(db, cMp).statut === 'envoyee');
-  verifie('commande NORD inchangée', commande(db, cNord).fournisseur_id === fNord);
+  verifie('commande MP inchangée',
+    lireCommande(db, cMp).fournisseur_id === fMp && lireCommande(db, cMp).statut === 'envoyee');
+  verifie('commande NORD inchangée', lireCommande(db, cNord).fournisseur_id === fNord);
   verifie('répertoire intact (2 fournisseurs)', nbFournisseurs(db) === 2, `→ ${nbFournisseurs(db)}`);
   db.close();
 }
