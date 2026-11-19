@@ -234,7 +234,7 @@ function Caisse({ utilisateur }) {
               <input
                 type="number"
                 min="0"
-                step="1"
+                step="0.01"
                 value={remise}
                 onChange={(e) => setRemise(e.target.value)}
                 placeholder="0"
@@ -261,7 +261,7 @@ function Caisse({ utilisateur }) {
                 <input
                   type="number"
                   min="0"
-                  step="1"
+                  step="0.01"
                   value={montantVerse}
                   onChange={(e) => setMontantVerse(e.target.value)}
                   placeholder={String(Math.ceil(total))}

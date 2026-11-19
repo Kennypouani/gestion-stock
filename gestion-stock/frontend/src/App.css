@@ -643,7 +643,11 @@ body {
 .modale-petite { max-width: 420px; }
 
 @media (max-width: 900px) {
-  .caisse-grille { grid-template-columns: 1fr; }
+  /* minmax(0, 1fr) et min-width: 0 : sans ça, un contenu large
+     (tableau du panier, grille d'articles) élargit la colonne
+     au-delà de l'écran au lieu de rester dans le cadre. */
+  .caisse-grille { grid-template-columns: minmax(0, 1fr); }
+  .caisse-grille > * { min-width: 0; }
   .panier { position: static; }
   .champ-large { grid-column: span 1; }
 }
@@ -652,7 +656,6 @@ body {
    VENTES PAR PÉRIODE ET COURBE D'ÉVOLUTION (tableau de bord)
    ============================================================ */
 .cartes-periodes { margin-top: 16px; margin-bottom: 8px; }
-.carte-ventes { border-left: 4px solid var(--bleu); }
 .carte-valeur-ventes { font-size: 1.5rem; color: var(--bleu-fonce); white-space: nowrap; }
 
 .etiquette-portee {
@@ -682,4 +685,35 @@ body {
 @media (max-width: 600px) {
   .carte-valeur-ventes { font-size: 1.25rem; }
   .tableau-boutiques { display: block; overflow-x: auto; }
+}
+
+/* ============================================================
+   PETITS ÉCRANS (téléphones)
+   Les tableaux ont beaucoup de colonnes : ils défilent dans leur
+   propre cadre au lieu d'élargir toute la page.
+   ============================================================ */
+@media (max-width: 760px) {
+  .entete { padding: 16px; border-radius: 0 0 10px 10px; }
+  .entete h1 { font-size: 1.25rem; }
+  .navigation button { padding: 9px 14px; font-size: 0.95rem; }
+  .bloc { padding: 14px; }
+  .boite-connexion { padding: 24px; }
+  .boite-document { padding: 20px; }
+  .boite-document h1 { font-size: 1.35rem; }
+  .modale { padding: 16px; }
+  .modale-actions { flex-wrap: wrap; }
+
+  /* Tableaux : défilement horizontal local, sans casser la page */
+  .tableau {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .tableau th, .tableau td { white-space: nowrap; }
+  .cellule-motif { max-width: 180px; white-space: normal; }
+
+  .barre-recherche { flex-wrap: wrap; gap: 8px; }
+  .barre-recherche input { min-width: 0; }
+  .actions-formulaire { flex-wrap: wrap; }
+  .panneau-reset input { min-width: 0; flex: 1 1 160px; }
 }
