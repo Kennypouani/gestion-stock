@@ -30,6 +30,13 @@ function booleen(valeur, defaut) {
   return defaut;
 }
 
+// --- Dossier des données persistantes ---
+// Contient la base (stock.db) et le dossier sauvegardes/.
+// Développement : le dossier backend/. En conteneur (ou sur un serveur où le
+// code est remplacé à chaque déploiement), pointez-le vers un volume monté
+// (ex. /app/donnees) : les données survivent alors à la mise à jour du code.
+const dossierDonnees = path.resolve(texte(process.env.DOSSIER_DONNEES) || __dirname);
+
 // NODE_ENV : "production" active les réglages stricts
 const environnement = texte(process.env.NODE_ENV).toLowerCase() || 'development';
 const estProduction = environnement === 'production';
@@ -120,6 +127,7 @@ if (forcerHttps && trustProxy === false) {
 }
 
 module.exports = {
+  dossierDonnees,
   environnement,
   estProduction,
   port,

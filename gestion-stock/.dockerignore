@@ -1,0 +1,25 @@
+# Contexte de build : on n'envoie que le code source
+**/node_modules
+**/dist
+
+# Données locales et sauvegardes : jamais dans l'image
+backend/stock.db
+backend/stock.db-journal
+backend/sauvegardes
+backend/*.log
+backend/*.pid
+backend/tests
+
+# Secrets (le conteneur les reçoit par variables d'environnement)
+**/.env
+**/.env.*
+
+# Résultats de tests
+frontend/test-results
+frontend/playwright-report
+frontend/e2e
+
+# Divers
+.git
+.gitignore
+node_modules

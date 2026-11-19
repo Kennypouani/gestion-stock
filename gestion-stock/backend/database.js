@@ -11,11 +11,13 @@
 //   • Les règles d'accès se vérifient EN BASE à chaque requête
 // ============================================================
 
+const path = require('path');
 const { DatabaseSync } = require('node:sqlite');
 const config = require('./config'); // Réglages lus dans l'environnement (.env)
 const { estHashDemo } = require('./motsDePasse'); // Détection des mots de passe publics
 const { reparerFournisseursCommandes } = require('./migrations'); // Corrections de données rejouables
-const db = new DatabaseSync('stock.db'); // Crée le fichier stock.db s'il n'existe pas
+// DOSSIER_DONNEES (config) : backend/ en développement, volume persistant en conteneur
+const db = new DatabaseSync(path.join(config.dossierDonnees, 'stock.db')); // Crée le fichier s'il n'existe pas
 
 // Active les clés étrangères (relations entre tables)
 db.exec('PRAGMA foreign_keys = ON');

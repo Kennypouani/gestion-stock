@@ -1,0 +1,46 @@
+# ============================================================
+# SERVICE SYSTEMD D'EXEMPLE — déploiement sans Docker
+#
+#   sudo cp deploiement/gestion-stock.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now gestion-stock
+#   systemctl status gestion-stock
+#   journalctl -u gestion-stock -f        # journaux en direct
+#
+# À adapter : User, WorkingDirectory et le chemin de node
+# (`which node` doit renvoyer /usr/bin/node ou /usr/local/bin/node).
+# Nginx/Caddy sert frontend/dist et relaie /api vers 127.0.0.1:5000
+# (voir MISE-EN-PRODUCTION.md).
+# ============================================================
+
+[Unit]
+Description=Gestion de stock — API Express
+Documentation=file:/var/www/gestion-stock/MISE-EN-PRODUCTION.md
+After=network.target
+
+[Service]
+Type=simple
+User=gestion
+Group=gestion
+
+# Le fichier stock.db est ouvert relativement au dossier de travail :
+# WorkingDirectory DOIT être backend/ (sauf DOSSIER_DONNEES explicite).
+WorkingDirectory=/var/www/gestion-stock/backend
+
+# NODE_ENV, TRUST_PROXY, ADMIN_*… sont lus dans backend/.env,
+# chargé par le serveur lui-même (config.js).
+EnvironmentFile=/var/www/gestion-stock/backend/.env
+ExecStart=/usr/bin/node server.js
+
+Restart=on-failure
+RestartSec=5
+
+# Durcissement : le service n'écrit que dans son dossier
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/www/gestion-stock/backend
+
+[Install]
+WantedBy=multi-user.target

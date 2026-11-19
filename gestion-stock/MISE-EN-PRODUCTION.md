@@ -132,6 +132,15 @@ Caddy obtient et renouvelle le certificat automatiquement et transmet
 cd backend && node server.js      # ou un service systemd / pm2
 ```
 
+Un service systemd d'exemple est fourni : `deploiement/gestion-stock.service`
+(chemin de `node`, `User` et `WorkingDirectory` à adapter).
+
+```bash
+sudo cp deploiement/gestion-stock.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now gestion-stock
+journalctl -u gestion-stock -f
+```
+
 ```bash
 curl -I http://stock.monmagasin.ci/api/sante            # 301 (proxy) ou 308 (application)
 curl -sI https://stock.monmagasin.ci/api/sante | grep -i strict-transport-security
@@ -168,9 +177,41 @@ Avec Nginx, `try_files $uri /index.html` sert ces deux fichiers depuis le disque
 mise en ligne, vérifiez `https://votre-domaine/robots.txt` et déclarez le sitemap dans la
 console de recherche (Google Search Console, Bing Webmaster Tools).
 
+## 6 bis. Déploiement en conteneurs (Docker)
+
+Alternative complète aux sections 3 à 5 : l'API et le site tournent dans deux
+conteneurs, les données dans un volume.
+
+```bash
+cp backend/.env.example backend/.env    # puis valeurs de production (section 1)
+docker compose up -d --build
+docker compose ps                       # api healthy, web lancé
+```
+
+- `Dockerfile` : trois cibles — `frontend` (compilation Vite), `api` (Node 24,
+  `node:sqlite`) et `web` (Nginx). Node est épinglé sur la version 24, tout comme
+  le champ `engines` des deux `package.json`.
+- `docker-compose.yml` : le volume `donnees` est monté sur `/app/donnees` et
+  contient `stock.db` **et** `sauvegardes/` ; il survit à `docker compose down`
+  puis `up` (mais pas à `down -v`). L'API le sait grâce à `DOSSIER_DONNEES`, à
+  laisser à `/app/donnees`.
+- `deploiement/nginx.conf` : sert `dist/`, relaie `/api` vers `api:5000` et
+  propage `X-Forwarded-Proto`.
+- Le site écoute sur le port `8080` de l'hôte ; le proxy TLS de l'hôte
+  (Caddy/Nginx/Traefik) reste devant, et `TRUST_PROXY=1` doit être réglé dans
+  `backend/.env`.
+
+Sauvegarde du volume :
+
+```bash
+docker run --rm -v gestion-stock_donnees:/donnees -v "$PWD":/sauvegarde alpine \
+  tar czf /sauvegarde/donnees-$(date +%F).tar.gz -C /donnees .
+```
+
 ## 7. Données et sauvegardes
 
-`backend/stock.db` et `backend/sauvegardes/` ne sont pas versionnés. Prévoyez une copie de
+`backend/stock.db` et `backend/sauvegardes/` (ou le volume `donnees` en
+conteneurs) ne sont pas versionnés. Prévoyez une copie de
 ces fichiers hors du serveur, des droits restreints (`backend/.env` en `600`) et la
 rotation déjà assurée par l'application (7 sauvegardes). Les sessions expirées sont purgées
 automatiquement, au démarrage puis toutes les heures.

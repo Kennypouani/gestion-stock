@@ -1,0 +1,63 @@
+# ============================================================
+# MISE EN LIGNE — API + site, données persistantes
+#
+#   1. cp backend/.env.example backend/.env   puis renseigner les
+#      valeurs de production (voir MISE-EN-PRODUCTION.md)
+#   2. docker compose up -d --build
+#
+# Le volume « donnees » contient stock.db ET sauvegardes/ : il survit
+# à la recréation des conteneurs comme au remplacement de l'image.
+#
+# Le site est servi sur http://<serveur>:8080. Pour HTTPS, placez le
+# proxy TLS de l'hôte (Caddy, Nginx, Traefik) devant ce port : il doit
+# transmettre X-Forwarded-Proto, et TRUST_PROXY=1 doit être réglé dans
+# backend/.env, sinon FORCER_HTTPS redirige en boucle.
+# ============================================================
+
+services:
+  api:
+    build:
+      context: .
+      target: api
+    restart: unless-stopped
+    # Variables de production : c'est le fichier déjà documenté
+    env_file:
+      - ./backend/.env
+    environment:
+      # Valeurs imposées par le conteneur (elles priment sur env_file)
+      NODE_ENV: production
+      PORT: "5000"
+      DOSSIER_DONNEES: /app/donnees
+    volumes:
+      # stock.db + sauvegardes/ : hors de l'image, donc conservés
+      - donnees:/app/donnees
+    expose:
+      - "5000"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:5000/api/sante').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  web:
+    build:
+      context: .
+      target: web
+      args:
+        # Domaine public : génère robots.txt et sitemap.xml
+        SITE_URL: ${SITE_URL:-http://localhost:8080}
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      # 8080 côté hôte : le proxy TLS de l'hôte écoute sur 443
+      - "8080:80"
+
+volumes:
+  donnees:

@@ -12,8 +12,10 @@
 const fs = require('fs');
 const path = require('path');
 const db = require('./database');
+const config = require('./config');
 
-const DOSSIER = path.join(__dirname, 'sauvegardes');
+// Même dossier que la base : sauvegardes/ suit le volume persistant (DOSSIER_DONNEES)
+const DOSSIER = path.join(config.dossierDonnees, 'sauvegardes');
 const GARDEES = 7; // Nombre de copies conservées
 let minuterie = null;
 
