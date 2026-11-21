@@ -1,0 +1,44 @@
+# ============================================================
+# INTÉGRATION CONTINUE — suites backend et parcours E2E
+#
+# Un seul travail : la commande `npm test` de gestion-stock/, qui
+# enchaîne les 4 suites backend puis Playwright. Le backend de test
+# tourne dans un dossier de données temporaire (DOSSIER_DONNEES) :
+# aucune donnée réelle n'est utilisée.
+#
+# Le projet est dans le sous-dossier gestion-stock/ du dépôt.
+# ============================================================
+
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  tests:
+    name: Backend + E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Installer Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Installer les dépendances du backend
+        run: cd gestion-stock/backend && npm ci
+
+      - name: Installer les dépendances du frontend
+        run: cd gestion-stock/frontend && npm ci
+
+      - name: Installer Chromium pour Playwright
+        run: cd gestion-stock/frontend && npx playwright install --with-deps chromium
+
+      - name: Lancer les 5 suites (4 backend + E2E)
+        run: cd gestion-stock && npm test

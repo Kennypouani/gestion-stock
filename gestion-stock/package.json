@@ -1,0 +1,12 @@
+{
+  "name": "gestion-stock",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Gestion de stock multi-boutiques — suites de tests",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "test": "node scripts/tests.js"
+  }
+}
