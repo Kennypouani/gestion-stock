@@ -24,6 +24,7 @@ const net = require('net');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { DatabaseSync } = require('node:sqlite');
+const bcrypt = require('bcryptjs');
 
 let BASE = '';
 let ok = 0;
@@ -314,6 +315,65 @@ function avecBase(dossier, action) {
     });
     verifie('Réinitialisation avec un mot de passe robuste acceptée (200)', resetValide.statut === 200,
       `→ ${resetValide.statut} ${JSON.stringify(resetValide.corps)}`);
+
+    // ============================================================
+    console.log('\n===== 4 bis. RÉINITIALISATION HORS PÉRIMÈTRE =====');
+    // ============================================================
+    // RÉGRESSION : un admin ne peut réinitialiser que le mot de passe
+    // des comptes qui partagent AU MOINS une de ses boutiques. Sans ce
+    // contrôle, il pouvait prendre la main sur un compte d'un autre
+    // magasin (réinitialiser, puis se connecter à sa place).
+    // Fixture : un admin rattaché à une seule boutique « Hors Portée »,
+    // qui ne partage donc rien avec l'employé créé ci-dessus (boutique 1).
+    const EMAIL_ADMIN_HORS_PORTEE = 'admin-hors-portee@test.fr';
+    const MDP_ADMIN_HORS_PORTEE = 'HorsPortee2026!';
+    avecBase(serveur.dossier, (base) => {
+      const boutique = base
+        .prepare(
+          `INSERT INTO boutiques (nom, code, ville, quartier)
+           VALUES ('Boutique Hors Portée (test)', 'HORS', 'Abidjan', 'Zone industrielle')`
+        )
+        .run();
+      const admin = base
+        .prepare(
+          `INSERT INTO utilisateurs (nom, email, mot_de_passe, role, boutique_id, actif, mot_de_passe_a_changer)
+           VALUES ('Admin Hors Portée', ?, ?, 'admin', NULL, 1, 0)`
+        )
+        .run(EMAIL_ADMIN_HORS_PORTEE, bcrypt.hashSync(MDP_ADMIN_HORS_PORTEE, 10));
+      base
+        .prepare('INSERT INTO acces_boutiques (utilisateur_id, boutique_id) VALUES (?, ?)')
+        .run(Number(admin.lastInsertRowid), Number(boutique.lastInsertRowid));
+    });
+
+    const connexionHorsPortee = await requete('/auth/connexion', {
+      method: 'POST',
+      body: JSON.stringify({ email: EMAIL_ADMIN_HORS_PORTEE, mot_de_passe: MDP_ADMIN_HORS_PORTEE }),
+    });
+    verifie('Connexion de l’admin hors périmètre (200)', connexionHorsPortee.statut === 200,
+      `→ ${connexionHorsPortee.statut} ${JSON.stringify(connexionHorsPortee.corps)}`);
+    const HP = J(connexionHorsPortee.cookie);
+
+    const resetHorsPortee = await requete(`/utilisateurs/${compteId}/mot-de-passe`, {
+      method: 'PUT', headers: HP,
+      body: JSON.stringify({ mot_de_passe: 'PirateHorsPortee2026' }),
+    });
+    verifie('Admin hors périmètre : réinitialisation REFUSÉE (404)',
+      resetHorsPortee.statut === 404,
+      `→ ${resetHorsPortee.statut} ${JSON.stringify(resetHorsPortee.corps)}`);
+
+    const victimeIntacte = await requete('/auth/connexion', {
+      method: 'POST',
+      body: JSON.stringify({ email: 'employe-securite@test.fr', mot_de_passe: 'Provisoire2026' }),
+    });
+    verifie('Mot de passe de la victime INCHANGÉ (connexion initiale toujours valide)',
+      victimeIntacte.statut === 200, `→ ${victimeIntacte.statut}`);
+
+    const pirateRefuse = await requete('/auth/connexion', {
+      method: 'POST',
+      body: JSON.stringify({ email: 'employe-securite@test.fr', mot_de_passe: 'PirateHorsPortee2026' }),
+    });
+    verifie('Mot de passe imposé hors périmètre JAMAIS appliqué (401)',
+      pirateRefuse.statut === 401, `→ ${pirateRefuse.statut}`);
 
     // ============================================================
     console.log('\n===== 5. PREMIÈRE CONNEXION DU COMPTE CRÉÉ =====');

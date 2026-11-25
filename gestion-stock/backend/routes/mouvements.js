@@ -104,18 +104,29 @@ router.get('/', (req, res) => {
 
   const clauses = [];
   const params = [];
-  const porteeSql = clauseBoutique(req, 'm.boutique_id');
-  if (porteeSql.sql) {
-    clauses.push(porteeSql.sql.replace(/^ AND /, ''));
-    params.push(...porteeSql.params);
-  } else if (req.query.boutique_id) {
-    // L'admin peut cibler une boutique précise
+
+  // Ciblage d'UNE boutique (facultatif) : validé contre la portée de la
+  // session. Un identifiant étranger est refusé AVANT toute lecture.
+  let boutiqueChoisie = null;
+  if (req.query.boutique_id !== undefined) {
     const cible = parseInt(req.query.boutique_id, 10);
     if (!Number.isInteger(cible) || cible <= 0) {
       return res.status(400).json({ erreur: 'Identifiant de boutique invalide' });
     }
+    if (!portee.ids.includes(cible)) {
+      return res.status(403).json({ erreur: 'Cette boutique ne vous est pas rattachée' });
+    }
+    boutiqueChoisie = cible;
+  }
+
+  // Isolation : le compte ne voit QUE ses boutiques, ou celle qu'il cible
+  if (boutiqueChoisie !== null) {
     clauses.push('m.boutique_id = ?');
-    params.push(cible);
+    params.push(boutiqueChoisie);
+  } else {
+    const porteeSql = clauseBoutique(req, 'm.boutique_id');
+    clauses.push(porteeSql.sql.replace(/^ AND /, ''));
+    params.push(...porteeSql.params);
   }
 
   try {

@@ -343,6 +343,38 @@ const NOM_PRODUIT_NORD = 'TEST Produit Nord';
   verifie('Caissier : création de produit REFUSÉE (403 — il vend, il ne gère pas)',
     spoofEmp.statut === 403, `→ ${spoofEmp.statut} ${JSON.stringify(spoofEmp.corps)}`);
 
+  // Un ticket ne peut pas mélanger deux boutiques, même pour un admin
+  // qui a légitimement accès aux deux : la boutique du ticket est celle
+  // des produits qu'il contient.
+  const produitBoutique1 = produitsA.find((p) => p.boutique_id !== nord.id);
+  const venteMixte = await requete('/ventes', {
+    method: 'POST', headers: A,
+    body: JSON.stringify({
+      lignes: [{ produit_id: produitBoutique1?.id, quantite: 1 }],
+      moyen_paiement: 'carte',
+      boutique_id: nord.id,
+    }),
+  });
+  verifie('Admin : ticket Nord avec un produit de la boutique 1 REFUSÉ (404)',
+    venteMixte.statut === 404, `→ ${venteMixte.statut} ${JSON.stringify(venteMixte.corps)}`);
+
+  // Ciblage d'une boutique en lecture : un identifiant étranger est refusé
+  // au lieu d'être silencieusement ignoré.
+  const ciblageEtranger = await requete('/mouvements?boutique_id=999999', { headers: A });
+  verifie('Admin : ?boutique_id= étranger REFUSÉ (403)', ciblageEtranger.statut === 403,
+    `→ ${ciblageEtranger.statut} ${JSON.stringify(ciblageEtranger.corps)}`);
+
+  // … et un identifiant valide filtre réellement (branche autrefois morte)
+  const mouvementsCibles = (await requete(`/mouvements?boutique_id=${nord.id}`, { headers: A })).corps || [];
+  verifie('Admin : mouvements filtrés sur la boutique Nord uniquement',
+    mouvementsCibles.length > 0 && mouvementsCibles.every((m) => m.boutique_id === nord.id),
+    `${mouvementsCibles.length} mouvement(s)`);
+
+  const commandesCiblees = (await requete(`/commandes?boutique_id=${nord.id}`, { headers: A })).corps || [];
+  verifie('Admin : commandes filtrées sur la boutique Nord uniquement',
+    commandesCiblees.length > 0 && commandesCiblees.every((c) => c.boutique_id === nord.id),
+    `${commandesCiblees.length} commande(s)`);
+
   const modifEmp = await requete('/produits/1', {
     method: 'PUT', headers: E,
     body: JSON.stringify({ prix_vente: 99, motif: 'Tentative' }),

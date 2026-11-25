@@ -314,8 +314,11 @@ router.put('/:id/mot-de-passe', (req, res) => {
   }
 
   try {
+    // Le compte visé doit PARTAGER une boutique avec l'appelant : sans ce
+    // contrôle, un admin pourrait réinitialiser le mot de passe d'un compte
+    // hors de sa portée, puis se connecter à sa place.
     const cible = db.prepare('SELECT id FROM utilisateurs WHERE id = ?').get(cibleId);
-    if (!cible) {
+    if (!cible || !partageMaBoutique(req, cibleId)) {
       return res.status(404).json({ erreur: 'Compte introuvable' });
     }
 

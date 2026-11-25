@@ -49,18 +49,28 @@ router.get('/', (req, res) => {
   const clauses = ['1=1'];
   const params = [];
 
-  // Isolation : le gérant ne voit QUE les commandes de sa boutique
-  const porteeSql = clauseBoutique(req, 'c.boutique_id');
-  if (porteeSql.sql) {
-    clauses.push(porteeSql.sql.replace(/^ AND /, ''));
-    params.push(...porteeSql.params);
-  } else if (req.query.boutique_id) {
+  // Ciblage d'UNE boutique (facultatif) : validé contre la portée de la
+  // session. Un identifiant étranger est refusé AVANT toute lecture.
+  let boutiqueChoisie = null;
+  if (req.query.boutique_id !== undefined) {
     const cible = parseInt(req.query.boutique_id, 10);
     if (!Number.isInteger(cible) || cible <= 0) {
       return res.status(400).json({ erreur: 'Identifiant de boutique invalide' });
     }
+    if (!portee.ids.includes(cible)) {
+      return res.status(403).json({ erreur: 'Cette boutique ne vous est pas rattachée' });
+    }
+    boutiqueChoisie = cible;
+  }
+
+  // Isolation : le compte ne voit QUE ses boutiques, ou celle qu'il cible
+  if (boutiqueChoisie !== null) {
     clauses.push('c.boutique_id = ?');
-    params.push(cible);
+    params.push(boutiqueChoisie);
+  } else {
+    const porteeSql = clauseBoutique(req, 'c.boutique_id');
+    clauses.push(porteeSql.sql.replace(/^ AND /, ''));
+    params.push(...porteeSql.params);
   }
 
   if (statut && LIBELLES_STATUT[statut]) {
@@ -172,10 +182,17 @@ router.post('/', (req, res) => {
         .get();
       const numero = `CMD-${new Date().getFullYear()}-${String(prochain).padStart(4, '0')}`;
 
-      // Boutique de la commande : celle du gérant/employé qui la passe
-      // ; l'admin peut préciser boutique_id (défaut : 1)
-      const boutiqueId = boutiqueCible(req, req.body);
+      // Boutique de la commande : celle du gérant/employé qui la passe.
+      // L'admin peut préciser boutique_id ; sinon on prend celle du
+      // fournisseur choisi (jamais une boutique devinée au hasard).
+      let boutiqueId = boutiqueCible(req, req.body);
       if (!boutiqueId) throw new ErreurHttp(403, 'Aucune boutique rattachée à ce compte');
+      if (
+        req.utilisateur.role === 'admin' &&
+        (req.body.boutique_id === undefined || req.body.boutique_id === null)
+      ) {
+        boutiqueId = Number(fournisseur.boutique_id);
+      }
       const boutiqueExistante = db
         .prepare('SELECT id FROM boutiques WHERE id = ? AND actif = 1')
         .get(boutiqueId);
@@ -186,6 +203,18 @@ router.post('/', (req, res) => {
         throw new ErreurHttp(
           400,
           'Ce fournisseur appartient à une autre boutique — choisissez-en un de cette boutique'
+        );
+      }
+
+      // Une commande ne mélange jamais deux boutiques : un produit d'un
+      // autre magasin est introuvable ici, même pour un admin multi-boutiques.
+      const produitEtranger = detail.find(
+        (d) => Number(d.produit.boutique_id) !== boutiqueId
+      );
+      if (produitEtranger) {
+        throw new ErreurHttp(
+          404,
+          `Produit introuvable (#${produitEtranger.produit.id}) — il appartient à une autre boutique`
         );
       }
 

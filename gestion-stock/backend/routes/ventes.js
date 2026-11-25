@@ -103,11 +103,30 @@ router.post('/', (req, res) => {
       const numero = `TK-${new Date().getFullYear()}-${String(prochain).padStart(4, '0')}`;
 
       // --- 5. Enregistrement de l'en-tête du ticket ---
-      // La boutique du ticket = celle de la session (gérant/employé)
-      // ; l'admin peut préciser boutique_id dans le corps (défaut : 1)
-      const boutiqueId = boutiqueCible(req, req.body);
+      // La boutique du ticket = celle de la session (gérant/employé).
+      // L'admin peut préciser boutique_id ; sinon on prend celle du panier.
+      let boutiqueId = boutiqueCible(req, req.body);
       if (!boutiqueId) {
         throw new ErreurHttp(403, 'Aucune boutique rattachée à ce compte');
+      }
+      if (
+        req.utilisateur.role === 'admin' &&
+        (req.body.boutique_id === undefined || req.body.boutique_id === null)
+      ) {
+        const boutiquesPanier = new Set(detail.map((d) => Number(d.produit.boutique_id)));
+        if (boutiquesPanier.size === 1) boutiqueId = [...boutiquesPanier][0];
+      }
+
+      // Un ticket ne mélange jamais deux boutiques : un produit d'un autre
+      // magasin est introuvable ici, même pour un admin multi-boutiques.
+      const produitEtranger = detail.find(
+        (d) => Number(d.produit.boutique_id) !== boutiqueId
+      );
+      if (produitEtranger) {
+        throw new ErreurHttp(
+          404,
+          `Produit introuvable (#${produitEtranger.produit.id}) — il appartient à une autre boutique`
+        );
       }
 
       const insertion = db.prepare(`
