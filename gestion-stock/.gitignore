@@ -1,0 +1,3 @@
+# Archives produites par `npm run sauvegarde` : à copier hors de la machine,
+# jamais à versionner (elles contiennent la base et le .env).
+/sauvegardes-locales/
