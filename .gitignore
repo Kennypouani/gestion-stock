@@ -20,3 +20,4 @@ gestion-stock/frontend/dist/
 gestion-stock/backend/.env
 gestion-stock/backend/.env.*
 !gestion-stock/backend/.env.example
+!gestion-stock/backend/.env.production.example

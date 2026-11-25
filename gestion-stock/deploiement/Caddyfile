@@ -1,0 +1,45 @@
+# ============================================================
+# CADDY — TLS automatique devant le site (conteneurs web + api)
+#
+#   sudo cp deploiement/Caddyfile /etc/caddy/Caddyfile
+#   sudo sed -i "s/<domaine>/stock.monmagasin.ci/" /etc/caddy/Caddyfile
+#   sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+#   sudo systemctl reload caddy
+#
+# `sudo ./deploiement/deploy.sh install` fait ces étapes lui-même : il
+# remplace le domaine ci-dessous par celui de ORIGINE_FRONTEND
+# (backend/.env) et conserve l'ancien fichier en .bak.
+#
+# Prérequis :
+#   • le DNS du domaine pointe déjà vers ce serveur (A / AAAA) ;
+#   • les ports 80 et 443 sont ouverts (le 80 sert au renouvellement ACME) ;
+#   • docker compose publie le site sur 127.0.0.1:8080.
+#
+# Caddy transmet X-Forwarded-Proto: https ; l'API ne boucle donc pas,
+# à condition que TRUST_PROXY=2 soit réglé dans backend/.env (Caddy puis
+# Nginx du conteneur : deux proxys devant l'API).
+# ============================================================
+
+# Domaine d'exemple remplacé par deploy.sh (ou à la main).
+stock.tondomaine.ci {
+	encode zstd gzip
+
+	# HSTS : ce proxy est le seul point d'entrée public en HTTPS.
+	# (L'API ajoute le même en-tête sur ses propres réponses.)
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+
+	# Fichiers compilés (noms hachés par Vite) : cache long sans risque.
+	# index.html n'est pas concerné et reste revalidé.
+	@assets path /assets/*
+	header @assets Cache-Control "public, max-age=31536000, immutable"
+
+	# Un seul upstream : le routage /api reste dans deploiement/nginx.conf,
+	# qui relaie vers le service « api » du compose.
+	reverse_proxy 127.0.0.1:8080 {
+		header_up X-Forwarded-Proto https
+	}
+}

@@ -25,7 +25,7 @@ ADMIN_MOT_DE_PASSE=...      # 12 caractères minimum
 
 | Variable | Rôle |
 |---|---|
-| `TRUST_PROXY` | Nombre de proxies de confiance devant l'application. **Obligatoire (`1`) derrière un proxy** : sans lui, `req.secure` reste faux et `FORCER_HTTPS` redirige en boucle. Ne le réglez que si un proxy est réellement présent, sinon un client peut usurper son IP via `X-Forwarded-For` et contourner la limitation des tentatives de connexion. |
+| `TRUST_PROXY` | Nombre de proxies de confiance devant l'application. **Obligatoire derrière un proxy** : sans lui, `req.secure` reste faux et `FORCER_HTTPS` redirige en boucle. `1` avec un seul proxy ; `2` avec Caddy sur l'hôte devant le Nginx du conteneur (chaîne de `deploiement/deploy.sh`). Ne le réglez que si un proxy est réellement présent, sinon un client peut usurper son IP via `X-Forwarded-For` et contourner la limitation des tentatives de connexion. |
 | `FORCER_HTTPS` | Redirection `308` de tout HTTP vers HTTPS et HSTS. `true` par défaut en production ; `false` uniquement pour un test HTTP local. |
 | `COOKIE_SECURE` | Cookie de session envoyé sur HTTPS seulement. `true` par défaut en production. |
 | `ORIGINE_FRONTEND` | Origine exacte du frontend autorisée par CORS, sans slash final (`https://stock.monmagasin.ci`). |
@@ -198,8 +198,9 @@ docker compose ps                       # api healthy, web lancé
 - `deploiement/nginx.conf` : sert `dist/`, relaie `/api` vers `api:5000` et
   propage `X-Forwarded-Proto`.
 - Le site écoute sur le port `8080` de l'hôte ; le proxy TLS de l'hôte
-  (Caddy/Nginx/Traefik) reste devant, et `TRUST_PROXY=1` doit être réglé dans
-  `backend/.env`.
+  (Caddy/Nginx/Traefik) reste devant, et **`TRUST_PROXY=2`** doit être réglé
+  dans `backend/.env` : deux proxys s'empilent (celui de l'hôte, puis le
+  Nginx du conteneur). Avec un seul proxy, `1` suffit.
 
 Sauvegarde du volume :
 
@@ -207,6 +208,34 @@ Sauvegarde du volume :
 docker run --rm -v gestion-stock_donnees:/donnees -v "$PWD":/sauvegarde alpine \
   tar czf /sauvegarde/donnees-$(date +%F).tar.gz -C /donnees .
 ```
+
+## 6 ter. VPS : installation en une commande
+
+Trois fichiers couvrent un serveur vierge :
+
+- `deploiement/deploy.sh` — installe Docker et Caddy, démarre, met à jour et
+  sauvegarde le volume ;
+- `deploiement/Caddyfile` — TLS Let's Encrypt devant le port `8080`, le
+  domaine de `ORIGINE_FRONTEND` étant substitué à l'installation ;
+- `backend/.env.production.example` — modèle de `backend/.env` de production.
+
+```bash
+sudo git clone https://github.com/Kennypouani/gestion-stock.git /opt/gestion-stock
+cd /opt/gestion-stock
+sudo ./deploiement/deploy.sh install   # crée backend/.env, puis s'arrête
+sudo nano backend/.env                 # domaine, ADMIN_EMAIL, ADMIN_MOT_DE_PASSE
+sudo ./deploiement/deploy.sh install   # Docker + Caddy + démarrage
+docker compose ps                      # api healthy, web Up
+```
+
+Commandes suivantes : `start`, `stop`, `restart`, `update` (sauvegarde, puis
+`git pull --ff-only` et reconstruction), `backup` (archive horodatée dans
+`sauvegardes-hote/`, rotation de 14), `status` (santé, HSTS, robots.txt),
+`logs`.
+
+Prérequis : le DNS du domaine pointe vers le serveur, les ports `22`, `80` et
+`443` sont ouverts, et **`TRUST_PROXY=2`** est réglé dans `backend/.env`
+(Caddy puis Nginx du conteneur).
 
 ## 7. Données et sauvegardes
 

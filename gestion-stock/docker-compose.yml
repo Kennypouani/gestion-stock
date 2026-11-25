@@ -10,8 +10,9 @@
 #
 # Le site est servi sur http://<serveur>:8080. Pour HTTPS, placez le
 # proxy TLS de l'hôte (Caddy, Nginx, Traefik) devant ce port : il doit
-# transmettre X-Forwarded-Proto, et TRUST_PROXY=1 doit être réglé dans
-# backend/.env, sinon FORCER_HTTPS redirige en boucle.
+# transmettre X-Forwarded-Proto, et TRUST_PROXY=2 doit être réglé dans
+# backend/.env (Caddy sur l'hôte puis Nginx du conteneur : deux proxys),
+# sinon FORCER_HTTPS redirige en boucle. Voir deploiement/deploy.sh.
 # ============================================================
 
 services:
