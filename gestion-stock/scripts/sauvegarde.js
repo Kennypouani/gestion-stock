@@ -12,7 +12,13 @@
 // Usage :
 //   npm run sauvegarde                        → ./sauvegardes-locales/
 //   npm run sauvegarde -- --vers D:/Sauvegardes
+//   npm run sauvegarde -- --vers F:/gestion-stock --garder 5
 //   DESTINATION_SAUVEGARDE=D:/Sauvegardes npm run sauvegarde
+//
+// Les archives les plus anciennes de la destination sont supprimées
+// au-delà de la limite de conservation (10 par défaut, --garder <n>).
+// Si la destination est indisponible (clé USB débranchée), la sauvegarde
+// bascule sur ./sauvegardes-locales/ au lieu d'échouer.
 //
 // Aucune dépendance : l'archive est écrite en TAR puis GZIP avec les
 // modules natifs (node:zlib), et un fichier .sha256 l'accompagne.
@@ -32,6 +38,10 @@ const BASE = path.join(BACKEND, 'stock.db');
 const DOSSIER_SAUVEGARDES = path.join(BACKEND, 'sauvegardes');
 const ENV = path.join(BACKEND, '.env');
 const DESTINATION_DEFAUT = path.join(RACINE, 'sauvegardes-locales');
+const CONSERVATION_DEFAUT = 10;
+
+// Noms produits par cette commande : eux seuls peuvent être supprimés
+const MOTIF_ARCHIVE = /^gestion-stock-\d{4}-\d{2}-\d{2}_\d{6}(-\d+)?\.tar\.gz$/;
 
 // Dossiers jamais inclus : dépendances, historique Git, build, sortie
 const DOSSIERS_EXCLUS = ['node_modules', '.git', 'dist', 'sauvegardes-locales'];
@@ -52,6 +62,37 @@ function destinationDemandee(argv) {
   const parVariable = argv.find((a) => a.startsWith('--vers='));
   if (parVariable) return parVariable.slice('--vers='.length);
   return process.env.DESTINATION_SAUVEGARDE || DESTINATION_DEFAUT;
+}
+
+// --- 2 bis. Nombre d'archives conservées : --garder <n> ou variable ---
+function conservationDemandee(argv) {
+  const i = argv.indexOf('--garder');
+  const brut =
+    (i !== -1 && argv[i + 1]) ||
+    (argv.find((a) => a.startsWith('--garder=')) || '').slice('--garder='.length) ||
+    process.env.SAUVEGARDES_CONSERVEES ||
+    String(CONSERVATION_DEFAUT);
+  const nombre = Number.parseInt(brut, 10);
+  return Number.isInteger(nombre) && nombre >= 1 ? nombre : CONSERVATION_DEFAUT;
+}
+
+// --- 2 ter. Rotation : ne garde que les <garder> archives les plus récentes ---
+// Le nom contient l'horodatage, donc l'ordre alphabétique = l'ordre du temps.
+function appliquerRotation(dossier, garder) {
+  const archives = fs
+    .readdirSync(dossier)
+    .filter((nom) => MOTIF_ARCHIVE.test(nom))
+    .sort()
+    .reverse();
+  const supprimees = [];
+  for (const nom of archives.slice(garder)) {
+    for (const fichier of [nom, `${nom}.sha256`]) {
+      const chemin = path.join(dossier, fichier);
+      if (fs.existsSync(chemin)) fs.rmSync(chemin);
+    }
+    supprimees.push(nom);
+  }
+  return supprimees;
 }
 
 // --- 3. Liste du code : fichiers suivis + nouveaux, .gitignore respecté ---
@@ -273,8 +314,19 @@ function textesArchive(infos) {
 
 // --- 7. Programme principal ---
 async function main() {
-  const destination = path.resolve(destinationDemandee(process.argv.slice(2)));
-  fs.mkdirSync(destination, { recursive: true });
+  const argv = process.argv.slice(2);
+  const garder = conservationDemandee(argv);
+  const demandee = path.resolve(destinationDemandee(argv));
+
+  // Destination indisponible (clé USB absente) → repli local plutôt qu'échec
+  let destination = demandee;
+  try {
+    fs.mkdirSync(destination, { recursive: true });
+  } catch {
+    destination = DESTINATION_DEFAUT;
+    fs.mkdirSync(destination, { recursive: true });
+    console.log(`⚠️  Destination indisponible (${demandee}) : repli sur ${destination}`);
+  }
 
   const date = new Date();
   const nom = `gestion-stock-${horodatage(date)}`;
@@ -338,6 +390,9 @@ async function main() {
     const empreinte = await sha256(archive);
     fs.writeFileSync(`${archive}.sha256`, `${empreinte}  ${path.basename(archive)}\n`);
 
+    // Rotation : la destination ne dépasse jamais <garder> archives
+    const supprimees = appliquerRotation(destination, garder);
+
     const octets = fs.statSync(archive).size;
     const mo = (octets / (1024 * 1024)).toFixed(1).replace('.', ',');
     console.log('\n✅ Sauvegarde créée');
@@ -348,6 +403,10 @@ async function main() {
       `   Base    : ${base ? `intégrité ${base.integrite}` : 'aucune base trouvée'} — commit ${
         commit.status === 0 ? commit.stdout.trim() : 'inconnu'
       }`
+    );
+    console.log(
+      `   Rétention: ${garder} archive(s) conservée(s)` +
+        (supprimees.length ? ` — ${supprimees.length} ancienne(s) supprimée(s)` : '')
     );
     console.log('\n👉 Copiez cette archive hors de l’ordinateur (disque externe, cloud).\n');
   } finally {

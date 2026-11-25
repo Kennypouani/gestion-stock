@@ -24,6 +24,22 @@ Le dossier `sauvegardes-locales/` est ignoré par Git (l'archive contient la bas
 les secrets). **Copiez chaque archive hors de l'ordinateur** : disque externe, cloud,
 ou les deux.
 
+### Conservation automatique
+
+Chaque exécution ne garde que les **10 archives les plus récentes** de la destination
+(archives et fichiers `.sha256` associés) ; les plus anciennes sont supprimées, pour
+que la clé USB ne se remplisse pas. Pour changer la limite :
+
+```bash
+npm run sauvegarde -- --vers "F:/gestion-stock" --garder 5
+SAUVEGARDES_CONSERVEES=20 npm run sauvegarde
+```
+
+Seuls les fichiers nommés `gestion-stock-<date>_<heure>.tar.gz` sont concernés : les
+autres fichiers de la destination ne sont jamais touchés. Si la destination est
+indisponible (clé USB non branchée), la sauvegarde bascule automatiquement sur
+`sauvegardes-locales/` au lieu d'échouer.
+
 ## 2. Contenu de l'archive
 
 ```
@@ -112,3 +128,29 @@ scp user@vps:/var/sauvegardes/gestion-stock-*.tar.gz .
 - L'historique Git : il est sur GitHub (`git clone` le restaure).
 - Les fichiers ignorés de Git autres que ceux listés plus haut (`*.log`, `*.pid`,
   `backend/server-test.log`…) : sans intérêt pour une restauration.
+
+## 7. Sauvegarde automatique quotidienne (Windows)
+
+Une tâche planifiée **« GestionStock - Sauvegarde quotidienne »** exécute chaque jour
+à 20:00 le lanceur `scripts/sauvegarde-quotidienne.cmd`, qui lance :
+
+```bat
+node scripts\sauvegarde.js --vers "F:\gestion-stock" --garder 10
+```
+
+Les 10 dernières archives sont conservées sur la clé (rotation identique à la section 1) ;
+si la clé est absente, la sauvegarde part dans `sauvegardes-locales/`. La sortie est
+ajoutée à `sauvegardes-locales/sauvegarde-quotidienne.log`.
+
+La tâche s'exécute sous ton compte et seulement quand tu es connecté (aucun mot de
+passe n'est stocké). Gérer la tâche :
+
+```powershell
+schtasks /Query  /TN "GestionStock - Sauvegarde quotidienne" /V /FO LIST
+schtasks /Run    /TN "GestionStock - Sauvegarde quotidienne"      # essai immédiat
+schtasks /Change /TN "GestionStock - Sauvegarde quotidienne" /ST 21:30
+schtasks /Delete /TN "GestionStock - Sauvegarde quotidienne" /F
+```
+
+Si le lecteur de la clé change (F: → G:), adapter le chemin dans
+`scripts/sauvegarde-quotidienne.cmd` ; sinon la sauvegarde reste locale.
