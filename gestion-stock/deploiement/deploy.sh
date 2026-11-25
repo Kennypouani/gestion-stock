@@ -70,6 +70,20 @@ domaine_public() {
   printf '%s' "${site%%/*}"
 }
 
+# Caddyfile avec la ligne de site remplacée par le domaine public.
+# La première ligne hors commentaires terminée par « { » est celle du site
+# (« header { » et « reverse_proxy … { » viennent après).
+caddyfile_avec_domaine() {
+  awk -v domaine="$1" '
+    !fait && $0 !~ /^[[:space:]]*#/ && $0 ~ /\{[[:space:]]*$/ {
+      print domaine " {"
+      fait = 1
+      next
+    }
+    { print }
+  ' "$CADDYFILE"
+}
+
 # --- Vérifications préalables -----------------------------------------
 verifier_env() {
   if [ ! -f "$ENV" ]; then
@@ -82,8 +96,12 @@ verifier_env() {
     exit 1
   fi
 
-  if grep -q '<[^>]*>' "$ENV"; then
-    erreur "backend/.env contient encore des valeurs à compléter (<...>)."
+  # Les lignes de commentaire du modèle contiennent aussi « <...> » :
+  # seules les affectations sont contrôlées.
+  local a_completer
+  a_completer="$(grep -vE '^[[:space:]]*#' "$ENV" | grep -E '<[^>]*>' || true)"
+  if [ -n "$a_completer" ]; then
+    erreur "backend/.env contient encore des valeurs à compléter : $(printf '%s' "$a_completer" | cut -d= -f1 | tr '\n' ' ')"
   fi
 
   [ "$(lire_env NODE_ENV)" = "production" ] ||
@@ -143,7 +161,7 @@ configurer_caddy() {
     attention "Ancien Caddyfile conservé en $destination.<date>.bak"
   fi
 
-  sed "s/stock\.tondomaine\.ci/$domaine/g" "$CADDYFILE" >"$destination"
+  caddyfile_avec_domaine "$domaine" >"$destination"
   caddy validate --config "$destination" --adapter caddyfile >/dev/null ||
     erreur "Caddyfile invalide : vérifiez $destination."
 

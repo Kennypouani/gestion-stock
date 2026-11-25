@@ -13,7 +13,7 @@ Copier `backend/.env.example` en `backend/.env` (jamais versionné) et renseigne
 ```bash
 NODE_ENV=production
 PORT=5000
-ORIGINE_FRONTEND=https://stock.monmagasin.ci
+ORIGINE_FRONTEND=https://stock-magasin.duckdns.org
 TRUST_PROXY=1
 FORCER_HTTPS=true
 COOKIE_SECURE=true
@@ -236,6 +236,99 @@ Commandes suivantes : `start`, `stop`, `restart`, `update` (sauvegarde, puis
 Prérequis : le DNS du domaine pointe vers le serveur, les ports `22`, `80` et
 `443` sont ouverts, et **`TRUST_PROXY=2`** est réglé dans `backend/.env`
 (Caddy puis Nginx du conteneur).
+
+## 6 quater. Mise en ligne gratuite : VM Oracle Cloud Always Free + DuckDNS
+
+Chaîne retenue pour un hébergement à 0 € : sous-domaine gratuit
+`stock-magasin.duckdns.org`, VM Oracle Cloud Always Free, pile Docker + Caddy du dépôt.
+Oracle demande une carte bancaire à l'inscription (vérification d'identité ; les ressources
+Always Free ne sont pas facturées).
+
+### a. Réserver le sous-domaine (5 min)
+
+1. duckdns.org → connexion GitHub ou Google.
+2. `add domain` → `stock-magasin` ; le nom complet devient `stock-magasin.duckdns.org`.
+3. La page affiche un `token` : il permet de mettre l'IP à jour en ligne de commande.
+
+### b. Créer la VM Oracle
+
+1. Compte Oracle Cloud (la région d'accueil choisie est définitive).
+2. Compute → Instances → Create instance : image Ubuntu 24.04, shape `VM.Standard.A1.Flex`
+   avec 1 OCPU et 6 Go (quota gratuit total : 2 OCPU / 12 Go), IP publique, clé SSH
+   enregistrée.
+3. « Out of host capacity » : réessayer plus tard, changer de zone de disponibilité, ou se
+   rabattre sur `VM.Standard.E2.1.Micro` (1 Go de RAM, suffisant pour cette application).
+4. Networking → Security List → Add Ingress Rules : TCP **22, 80 et 443** depuis
+   `0.0.0.0/0`. Le port 80 est indispensable au certificat Let's Encrypt.
+
+### c. Pointer le nom vers la VM
+
+Sur duckdns.org : champ `current ip` = IP publique de la VM, puis `update ip`. Vérifier :
+
+```bash
+nslookup stock-magasin.duckdns.org   # doit renvoyer l'IP de la VM
+```
+
+En ligne de commande, avec le jeton affiché par DuckDNS :
+
+```bash
+curl "https://www.duckdns.org/update?domains=stock-magasin&token=<token>&ip=<ip-vm>"
+```
+
+### d. Ouvrir les ports dans la VM aussi
+
+Les images Ubuntu d'Oracle filtrent en plus avec iptables (sinon Caddy ne peut pas
+obtenir le certificat) :
+
+```bash
+sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 80 -j ACCEPT
+sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 443 -j ACCEPT
+sudo netfilter-persistent save
+```
+
+(ou `sudo ufw allow 80,443/tcp` si ufw est actif)
+
+### e. Installer l'application
+
+```bash
+sudo apt-get update && sudo apt-get install -y git
+sudo git clone https://github.com/Kennypouani/gestion-stock.git /opt/gestion-stock
+cd /opt/gestion-stock
+sudo ./deploiement/deploy.sh install   # Docker + Caddy, crée backend/.env puis s'arrête
+sudo nano backend/.env                 # ADMIN_EMAIL et ADMIN_MOT_DE_PASSE uniquement
+sudo ./deploiement/deploy.sh install   # démarre et obtient le certificat
+sudo ./deploiement/deploy.sh status
+```
+
+`backend/.env.production.example` contient déjà
+`ORIGINE_FRONTEND=https://stock-magasin.duckdns.org`, `TRUST_PROXY=2`, `FORCER_HTTPS=true`,
+`COOKIE_SECURE=true`, `SECURITE_STRICTE=true` et `COMPTES_DEMO=false` : seuls l'e-mail et
+le mot de passe administrateur restent à saisir.
+
+`deploy.sh` remplace la ligne de domaine du `Caddyfile` par celle de `ORIGINE_FRONTEND`
+(les autres blocs sont conservés) ; Caddy obtient ensuite le certificat via le port 80.
+
+### f. Vérifier
+
+```bash
+curl -sI https://stock-magasin.duckdns.org/api/sante | head -3
+curl -s  https://stock-magasin.duckdns.org/robots.txt
+```
+
+Attendu : `200`, en-tête `strict-transport-security`, `robots.txt` contenant le domaine.
+Se connecter avec `ADMIN_EMAIL` ; un changement de mot de passe est imposé à la première
+connexion.
+
+### g. Entretien
+
+- Sauvegarde quotidienne du volume (crontab de root), puis rapatriement hors du serveur :
+  `0 3 * * * /opt/gestion-stock/deploiement/deploy.sh backup >> /var/log/gestion-stock-backup.log 2>&1`
+  (une VM gratuite peut être récupérée par Oracle si elle reste inactive : CPU, réseau et
+  mémoire sous 20 % pendant 7 jours).
+- Mise à jour : `sudo /opt/gestion-stock/deploiement/deploy.sh update`.
+- Changer de domaine : modifier `ORIGINE_FRONTEND` dans `backend/.env`, relancer
+  `deploy.sh install` (Caddyfile régénéré) puis `update` (le build régénère
+  `robots.txt` et `sitemap.xml`).
 
 ## 7. Données et sauvegardes
 

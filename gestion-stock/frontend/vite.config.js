@@ -8,7 +8,7 @@ import react from '@vitejs/plugin-react';
 // Domaine public utilisé pour robots.txt et sitemap.xml.
 // À remplacer à UN SEUL endroit : SITE_URL dans frontend/.env
 // (modèle : frontend/.env.example — détail : MISE-EN-PRODUCTION.md).
-const SITE_URL_PAR_DEFAUT = 'https://stock.monmagasin.ci';
+const SITE_URL_PAR_DEFAUT = 'https://stock-magasin.duckdns.org';
 
 // --- Contenu des deux fichiers, calculé à partir du domaine ---
 function fichiersSeo(siteUrl) {
