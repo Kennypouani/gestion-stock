@@ -49,6 +49,27 @@ erreur() {
 
 a() { command -v "$1" >/dev/null 2>&1; }
 
+# --- 0. Outils de base (curl peut manquer sur une image minimale) ------
+if ! a curl; then
+  DEBIAN_FRONTEND=noninteractive apt-get update -qq
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl ca-certificates >/dev/null
+fi
+
+# Les règles iptables d'Oracle se terminent par un REJECT : une règle ajoutée
+# après lui ne servirait à rien. On insère donc toujours avant lui.
+ouvrir_port() { # port
+  local port="$1" position
+  if iptables -C INPUT -m state --state NEW -p tcp --dport "$port" -j ACCEPT 2>/dev/null; then
+    return 0
+  fi
+  position="$(iptables -S INPUT | awk '/^-P/ { next } { n++ } /-j (REJECT|DROP)/ { print n; exit }')"
+  if [ -n "$position" ]; then
+    iptables -I INPUT "$position" -m state --state NEW -p tcp --dport "$port" -j ACCEPT
+  else
+    iptables -A INPUT -m state --state NEW -p tcp --dport "$port" -j ACCEPT
+  fi
+}
+
 # Remplace « CLE=valeur » sans réinterpréter la valeur (mot de passe).
 remplacer_env() { # cle valeur fichier
   CLE="$1" VAL="$2" awk '
@@ -86,8 +107,7 @@ ok "$DOMAINE → $IP_VM"
 log "Ouverture des ports 80 et 443"
 if a iptables; then
   for port in 80 443; do
-    iptables -C INPUT -p tcp --dport "$port" -j ACCEPT 2>/dev/null ||
-      iptables -I INPUT 6 -m state --state NEW -p tcp --dport "$port" -j ACCEPT
+    ouvrir_port "$port" || erreur "Impossible d'ouvrir le port $port dans iptables."
   done
   if ! a netfilter-persistent; then
     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq iptables-persistent >/dev/null
@@ -103,15 +123,19 @@ log "Récupération du code"
 apt-get update -qq
 apt-get install -y -qq git curl >/dev/null
 if [ -d "$CIBLE/.git" ]; then
-  git -C "$CIBLE" pull --ff-only
+  git -C "$CIBLE" pull --ff-only ||
+    erreur "Mise à jour impossible : des fichiers ont été modifiés dans $CIBLE."
   ok "Dépôt mis à jour dans $CIBLE"
+elif [ -e "$CIBLE" ]; then
+  erreur "$CIBLE existe déjà sans dépôt Git : déplacez-le ou videz-le, puis relancez."
 else
-  git clone --depth 1 "$DEPOT" "$CIBLE"
+  git clone "$DEPOT" "$CIBLE"
   ok "Dépôt cloné dans $CIBLE"
 fi
 
 # --- 4. backend/.env ---------------------------------------------------
 if [ ! -f "$ENV" ]; then
+  [ -t 0 ] || erreur "Ce script pose deux questions : lancez-le depuis un terminal."
   log "Création de backend/.env (deux valeurs à saisir)"
   cp "$CIBLE/backend/.env.production.example" "$ENV"
   chmod 600 "$ENV"

@@ -138,7 +138,7 @@ installer_caddy() {
     log "Installation de Caddy (dépôt officiel)"
     apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https curl gnupg >/dev/null
     curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' |
-      gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+      gpg --batch --yes --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
     curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
       >/etc/apt/sources.list.d/caddy-stable.list
     apt-get update -qq
@@ -156,7 +156,7 @@ configurer_caddy() {
   domaine="$(domaine_public)"
 
   # Tout autre fichier existant est conservé de côté, jamais écrasé.
-  if [ -f "$destination" ] && ! grep -q "$domaine" "$destination"; then
+  if [ -f "$destination" ] && ! grep -qF "$domaine" "$destination"; then
     cp "$destination" "$destination.$(date +%Y%m%d-%H%M%S).bak"
     attention "Ancien Caddyfile conservé en $destination.<date>.bak"
   fi
@@ -173,8 +173,8 @@ configurer_caddy() {
 # --- Conteneurs --------------------------------------------------------
 attendre_api() {
   log "Attente de l'API (jusqu'à 90 s)"
-  local i conteneur etat
-  for i in $(seq 1 45); do
+  local conteneur etat
+  for _ in $(seq 1 45); do
     conteneur="$(docker compose ps -q api 2>/dev/null || true)"
     if [ -n "$conteneur" ]; then
       etat="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$conteneur" 2>/dev/null || true)"
@@ -235,9 +235,9 @@ sauvegarder() {
     alpine sh -c "tar czf /sauvegarde/$nom -C /donnees ."
   [ -s "$archive" ] || erreur "Archive vide : $archive"
 
-  # Rotation des archives de l'hôte
-  ls -1t "$SAUVEGARDES"/donnees-*.tar.gz 2>/dev/null |
-    tail -n +$((CONSERVER + 1)) | xargs -r rm -f || true
+  # Rotation des archives de l'hôte (les plus anciennes d'abord)
+  find "$SAUVEGARDES" -maxdepth 1 -name 'donnees-*.tar.gz' -printf '%T@ %p\n' 2>/dev/null |
+    sort -rn | tail -n +$((CONSERVER + 1)) | cut -d' ' -f2- | xargs -r rm -f || true
 
   ok "Archive : $archive ($(du -h "$archive" | cut -f1))"
   attention "Elle reste sur le serveur : copiez-la ailleurs (scp/rsync) régulièrement."
@@ -248,7 +248,13 @@ sauvegarder() {
 mettre_a_jour() {
   verifier_env
 
-  sauvegarder || attention "Sauvegarde ignorée : la mise à jour continue."
+  # « sauvegarder » s'arrête si l'API ne tourne pas : on ne l'appelle que
+  # lorsque les conteneurs sont là, pour ne pas bloquer un premier update.
+  if [ -n "$(docker compose ps -q api 2>/dev/null || true)" ]; then
+    sauvegarder || attention "Sauvegarde ignorée : la mise à jour continue."
+  else
+    attention "API arrêtée : sauvegarde ignorée, la mise à jour continue."
+  fi
 
   log "Récupération du code (git pull --ff-only)"
   git -C "$RACINE" pull --ff-only
