@@ -330,6 +330,44 @@ connexion.
   `deploy.sh install` (Caddyfile régénéré) puis `update` (le build régénère
   `robots.txt` et `sitemap.xml`).
 
+### h. Variante : installation automatique
+
+`deploiement/installer-vm.sh` regroupe les étapes **d** à **g** en une seule
+commande :
+
+```bash
+sudo git clone https://github.com/Kennypouani/gestion-stock.git /opt/gestion-stock
+sudo /opt/gestion-stock/deploiement/installer-vm.sh
+```
+
+Ce que fait le script :
+
+- met à jour le sous-domaine DuckDNS et attend que le nom pointe bien sur l'IP
+  publique de la VM (sinon il s'arrête avec l'IP attendue) ;
+- ouvre les ports `80` et `443` dans `iptables` et enregistre les règles ;
+- installe `git`, clone le dépôt dans `/opt/gestion-stock` (ou le met à jour) ;
+- crée `backend/.env` depuis `backend/.env.production.example` et demande
+  **uniquement** `ADMIN_EMAIL` et `ADMIN_MOT_DE_PASSE` (12 caractères minimum,
+  saisie masquée, fichiers en `600`) ;
+- lance `deploiement/deploy.sh install` (Docker, Caddy, certificat) ;
+- planifie la sauvegarde quotidienne de 3 h dans le crontab de root.
+
+Il est rejouable : un dépôt existant est mis à jour (`git pull --ff-only`), un
+`backend/.env` déjà présent n'est jamais écrasé et la ligne de crontab n'est pas
+dupliquée.
+
+Variables surchargeables : `DOMAINE` (défaut `stock-magasin.duckdns.org`) et
+`JETON_DUCKDNS` (jeton de duckdns.org : le script met l'IP à jour lui-même) :
+
+```bash
+sudo JETON_DUCKDNS=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx \
+  /opt/gestion-stock/deploiement/installer-vm.sh
+```
+
+Deux actions restent manuelles dans la console Oracle : la **Security List**
+(TCP `22`, `80`, `443` depuis `0.0.0.0/0`) et le champ **current ip** du
+sous-domaine sur duckdns.org, sauf si `JETON_DUCKDNS` est fourni.
+
 ## 7. Données et sauvegardes
 
 `backend/stock.db` et `backend/sauvegardes/` (ou le volume `donnees` en
